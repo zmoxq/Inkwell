@@ -1,0 +1,465 @@
+import SwiftUI
+import WebKit
+import Combine
+
+// MARK: - MarkdownEditorView (SwiftUI)
+
+struct MarkdownEditorView: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var markdownContent: String
+    var documentURL: URL?
+    var onContentChange: ((String) -> Void)?
+    var onSaveRequest: (() -> Void)?
+    var onCoordinatorReady: ((EditorCoordinator) -> Void)?
+    
+    var body: some View {
+        EditorWebViewRepresentable(
+            markdownContent: $markdownContent,
+            themeCSS: appState.currentThemeCSS,
+            documentURL: documentURL,
+            onContentChange: onContentChange,
+            onSaveRequest: onSaveRequest,
+            onEditorReady: {
+                appState.isEditorReady = true
+            },
+            onCoordinatorReady: onCoordinatorReady
+        )
+    }
+}
+
+// MARK: - Platform-specific Representable
+
+#if os(macOS)
+struct EditorWebViewRepresentable: NSViewRepresentable {
+    @Binding var markdownContent: String
+    let themeCSS: String
+    var documentURL: URL?
+    var onContentChange: ((String) -> Void)?
+    var onSaveRequest: (() -> Void)?
+    var onEditorReady: (() -> Void)?
+    var onCoordinatorReady: ((EditorCoordinator) -> Void)?
+    
+    func makeCoordinator() -> EditorCoordinator {
+        EditorCoordinator(
+            markdownContent: $markdownContent,
+            themeCSS: themeCSS,
+            documentURL: documentURL,
+            onContentChange: onContentChange,
+            onSaveRequest: onSaveRequest,
+            onEditorReady: onEditorReady
+        )
+    }
+    
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = context.coordinator.createWebView()
+        context.coordinator.loadEditorHTML()
+        onCoordinatorReady?(context.coordinator)
+        return webView
+    }
+    
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.handleSwiftUIUpdate(
+            markdown: markdownContent,
+            theme: themeCSS
+        )
+    }
+}
+#else
+struct EditorWebViewRepresentable: UIViewRepresentable {
+    @Binding var markdownContent: String
+    let themeCSS: String
+    var documentURL: URL?
+    var onContentChange: ((String) -> Void)?
+    var onSaveRequest: (() -> Void)?
+    var onEditorReady: (() -> Void)?
+    var onCoordinatorReady: ((EditorCoordinator) -> Void)?
+    
+    func makeCoordinator() -> EditorCoordinator {
+        EditorCoordinator(
+            markdownContent: $markdownContent,
+            themeCSS: themeCSS,
+            documentURL: documentURL,
+            onContentChange: onContentChange,
+            onSaveRequest: onSaveRequest,
+            onEditorReady: onEditorReady
+        )
+    }
+    
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = context.coordinator.createWebView()
+        context.coordinator.loadEditorHTML()
+        onCoordinatorReady?(context.coordinator)
+        return webView
+    }
+    
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.handleSwiftUIUpdate(
+            markdown: markdownContent,
+            theme: themeCSS
+        )
+    }
+}
+#endif
+
+// MARK: - Editor Coordinator
+
+class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    @Binding var markdownContent: String
+    var onContentChange: ((String) -> Void)?
+    var onSaveRequest: (() -> Void)?
+    var onEditorReady: (() -> Void)?
+    
+    /// Format state — set by ContentView, updated by selectionChange messages
+    var formatState: EditorFormatState?
+    /// Find/replace state — set by ContentView, updated by findResults messages
+    var findReplaceState: FindReplaceState?
+    
+    private var webView: WKWebView!
+    private var isEditorReady = false
+    private var isUpdatingFromJS = false
+    private var lastSentMarkdown: String = ""
+    private var lastSentTheme: String = ""
+    private var pendingMarkdown: String?
+    private var pendingTheme: String?
+    private var documentBaseURL: URL?
+    
+    init(
+        markdownContent: Binding<String>,
+        themeCSS: String,
+        documentURL: URL?,
+        onContentChange: ((String) -> Void)?,
+        onSaveRequest: (() -> Void)?,
+        onEditorReady: (() -> Void)?
+    ) {
+        self._markdownContent = markdownContent
+        self.onContentChange = onContentChange
+        self.onSaveRequest = onSaveRequest
+        self.onEditorReady = onEditorReady
+        self.documentBaseURL = documentURL?.deletingLastPathComponent()
+        super.init()
+        
+        if !markdownContent.wrappedValue.isEmpty {
+            self.pendingMarkdown = markdownContent.wrappedValue
+        }
+        if !themeCSS.isEmpty {
+            self.pendingTheme = themeCSS
+        }
+    }
+    
+    // MARK: - WebView Setup
+    
+    func createWebView() -> WKWebView {
+        let config = WKWebViewConfiguration()
+        let contentController = WKUserContentController()
+        contentController.add(self, name: "inkwell")
+        config.userContentController = contentController
+        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.navigationDelegate = self
+        
+        #if os(macOS)
+        wv.setValue(false, forKey: "drawsBackground")
+        #else
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.backgroundColor = .clear
+        wv.scrollView.alwaysBounceVertical = true
+        #endif
+        
+        #if DEBUG
+        if #available(macOS 13.3, iOS 16.4, *) {
+            wv.isInspectable = true
+        }
+        #endif
+        
+        self.webView = wv
+        return wv
+    }
+    
+    func loadEditorHTML() {
+        if let htmlURL = Bundle.main.url(forResource: "editor", withExtension: "html") {
+            // If we have a document directory, write a temp HTML there so images resolve
+            if let baseDir = documentBaseURL {
+                do {
+                    let htmlContent = try String(contentsOf: htmlURL, encoding: .utf8)
+                    let tempURL = baseDir.appendingPathComponent(".inkwell-editor.html")
+                    try htmlContent.write(to: tempURL, atomically: true, encoding: .utf8)
+                    webView.loadFileURL(tempURL, allowingReadAccessTo: baseDir)
+                    return
+                } catch {
+                    print("[Inkwell] Failed to write temp HTML: \(error)")
+                }
+            }
+            webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
+        } else {
+            print("[Inkwell] editor.html not in bundle, using embedded fallback")
+            webView.loadHTMLString(Self.embeddedEditorHTML, baseURL: documentBaseURL)
+        }
+    }
+    
+    // MARK: - SwiftUI Update Handler
+    
+    func handleSwiftUIUpdate(markdown: String, theme: String) {
+        guard !isUpdatingFromJS else { return }
+        
+        if theme != lastSentTheme {
+            if isEditorReady { sendThemeToJS(theme) }
+            else { pendingTheme = theme }
+        }
+        
+        if markdown != lastSentMarkdown {
+            if isEditorReady { sendMarkdownToJS(markdown) }
+            else { pendingMarkdown = markdown }
+        }
+    }
+    
+    // MARK: - Swift → JS
+    
+    private func sendMarkdownToJS(_ markdown: String) {
+        lastSentMarkdown = markdown
+        let escaped = escapeForJS(markdown)
+        webView.evaluateJavaScript("window.InkwellEditor.loadMarkdown(`\(escaped)`);") { _, error in
+            if let error = error { print("[Inkwell] JS error loading markdown: \(error)") }
+        }
+    }
+    
+    private func sendThemeToJS(_ css: String) {
+        lastSentTheme = css
+        let escaped = escapeForJS(css)
+        webView.evaluateJavaScript("window.InkwellEditor.applyTheme(`\(escaped)`);") { _, error in
+            if let error = error { print("[Inkwell] JS error applying theme: \(error)") }
+        }
+    }
+    
+    func execFormat(_ command: String) {
+        webView.evaluateJavaScript("window.InkwellEditor.execFormat('\(command)');")
+    }
+    
+    func focus() {
+        webView.evaluateJavaScript("window.InkwellEditor.focus();")
+    }
+    
+    // MARK: - Find & Replace — Swift → JS
+    
+    func findInDocument(_ query: String, caseSensitive: Bool) {
+        let escaped = escapeForJS(query)
+        webView.evaluateJavaScript("window.InkwellEditor.findInDocument(`\(escaped)`, \(caseSensitive));")
+    }
+    
+    func findNext() {
+        webView.evaluateJavaScript("window.InkwellEditor.findNext();")
+    }
+    
+    func findPrevious() {
+        webView.evaluateJavaScript("window.InkwellEditor.findPrevious();")
+    }
+    
+    func replaceCurrent(_ replacement: String) {
+        let escaped = escapeForJS(replacement)
+        webView.evaluateJavaScript("window.InkwellEditor.replaceCurrent(`\(escaped)`);")
+    }
+    
+    func replaceAll(_ replacement: String) {
+        let escaped = escapeForJS(replacement)
+        webView.evaluateJavaScript("window.InkwellEditor.replaceAll(`\(escaped)`);")
+    }
+    
+    func closeFindReplace() {
+        webView.evaluateJavaScript("window.InkwellEditor.closeFindReplace();")
+    }
+    
+    // MARK: - Scroll to Heading (outline navigation)
+    
+    func scrollToHeading(title: String, level: Int) {
+        let escaped = escapeForJS(title)
+        webView.evaluateJavaScript("window.InkwellEditor.scrollToHeading(`\(escaped)`, \(level));")
+    }
+    
+    // MARK: - Link / Image
+    
+    func applyLink(url: String, text: String) {
+        let escapedUrl = escapeForJS(url)
+        let escapedText = escapeForJS(text)
+        webView.evaluateJavaScript("window.InkwellEditor.applyLink(`\(escapedUrl)`, `\(escapedText)`);")
+    }
+    
+    private func escapeForJS(_ str: String) -> String {
+        str.replacingOccurrences(of: "\\", with: "\\\\")
+           .replacingOccurrences(of: "`", with: "\\`")
+           .replacingOccurrences(of: "${", with: "\\${")
+    }
+    
+    // MARK: - JS → Swift (WKScriptMessageHandler)
+    
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "inkwell",
+              let body = message.body as? String,
+              let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String
+        else { return }
+        
+        let payload = json["data"] as? [String: Any] ?? [:]
+        
+        switch type {
+        case "editorReady":
+            isEditorReady = true
+            if let theme = pendingTheme {
+                sendThemeToJS(theme)
+                pendingTheme = nil
+            }
+            if let markdown = pendingMarkdown {
+                sendMarkdownToJS(markdown)
+                pendingMarkdown = nil
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.onEditorReady?()
+            }
+            
+        case "contentChange", "contentChanged":
+            guard let content = payload["content"] as? String else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.isUpdatingFromJS = true
+                self.lastSentMarkdown = content
+                self.markdownContent = content
+                self.onContentChange?(content)
+                DispatchQueue.main.async {
+                    self.isUpdatingFromJS = false
+                }
+            }
+            
+        case "save":
+            DispatchQueue.main.async { [weak self] in
+                if let content = payload["content"] as? String {
+                    self?.markdownContent = content
+                }
+                self?.onSaveRequest?()
+            }
+            
+        case "selectionChange":
+            DispatchQueue.main.async { [weak self] in
+                self?.formatState?.update(from: payload)
+            }
+            
+        case "showFindReplace":
+            DispatchQueue.main.async { [weak self] in
+                self?.findReplaceState?.isVisible = true
+                if payload["mode"] as? String == "replace" {
+                    self?.findReplaceState?.showReplace = true
+                }
+            }
+            
+        case "findResults":
+            DispatchQueue.main.async { [weak self] in
+                self?.findReplaceState?.matchCount = payload["count"] as? Int ?? 0
+                self?.findReplaceState?.currentMatch = payload["current"] as? Int ?? -1
+            }
+            
+        case "requestLinkInput":
+            // JS is asking for a link URL — show a native dialog
+            let selectedText = payload["selectedText"] as? String ?? ""
+            DispatchQueue.main.async { [weak self] in
+                self?.showLinkDialog(selectedText: selectedText)
+            }
+            
+        case "openLink":
+            if let urlString = payload["url"] as? String, let url = URL(string: urlString) {
+                #if os(macOS)
+                NSWorkspace.shared.open(url)
+                #else
+                UIApplication.shared.open(url)
+                #endif
+            }
+            
+        default:
+            break
+        }
+    }
+    
+    // MARK: - Link Dialog
+    
+    private func showLinkDialog(selectedText: String) {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = "Insert Link"
+        alert.informativeText = "Enter the URL:"
+        alert.addButton(withTitle: "Insert")
+        alert.addButton(withTitle: "Cancel")
+        
+        let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        inputField.placeholderString = "https://"
+        alert.accessoryView = inputField
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let url = inputField.stringValue
+            if !url.isEmpty {
+                let text = selectedText.isEmpty ? url : selectedText
+                applyLink(url: url, text: text)
+            }
+        }
+        #endif
+    }
+    
+    // MARK: - WKNavigationDelegate
+    
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Navigation complete — JS will send editorReady
+    }
+    
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        print("[Inkwell] WebView failed: \(error)")
+    }
+    
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if navigationAction.navigationType == .linkActivated,
+           let url = navigationAction.request.url {
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #else
+            UIApplication.shared.open(url)
+            #endif
+            decisionHandler(.cancel)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+    
+    // MARK: - Embedded Editor HTML Fallback
+    
+    /// Minimal fallback HTML — the real editor should be loaded from editor.html in the bundle.
+    static let embeddedEditorHTML: String = """
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8">
+    <style id="theme-style"></style>
+    <style>html,body{margin:0;padding:0;height:100%}</style>
+    </head><body>
+    <div id="editor" contenteditable="true" style="outline:none;min-height:100vh;padding:40px 32px;max-width:760px;margin:0 auto;font-family:Georgia,serif;font-size:17px;line-height:1.75;">
+    <p>Editor loading — please ensure editor.html is in the app bundle.</p>
+    </div>
+    <script>
+    window.InkwellEditor = {
+      loadMarkdown: function(md) { document.getElementById('editor').innerText = md; },
+      getMarkdown: function() { return document.getElementById('editor').innerText; },
+      applyTheme: function(css) { document.getElementById('theme-style').textContent = css; },
+      execFormat: function(cmd) {},
+      focus: function() { document.getElementById('editor').focus(); },
+      findInDocument: function(){}, findNext: function(){}, findPrevious: function(){},
+      replaceCurrent: function(){}, replaceAll: function(){}, closeFindReplace: function(){},
+      applyLink: function(){}, applyImage: function(){}, insertTable: function(){}
+    };
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.inkwell) {
+      window.webkit.messageHandlers.inkwell.postMessage(JSON.stringify({type:'editorReady',data:{}}));
+    }
+    </script></body></html>
+    """
+}

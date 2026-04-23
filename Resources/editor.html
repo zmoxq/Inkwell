@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style id="theme-style">/* injected by Swift */</style>
+
+<!-- Highlight.js for code syntax highlighting -->
+<link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+
+<style>
+  /* Dark mode: swap to github-dark theme */
+  @media (prefers-color-scheme: dark) {
+    /* Override will be handled by swapping the theme link in JS */
+  }
+
+  html, body { margin: 0; padding: 0; height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .editor-container { min-height: 100vh; }
+  #editor { outline: none; min-height: 100vh; }
+  #editor.ProseMirror { outline: none; }
+
+  /* Code block styling */
+  #editor pre {
+    position: relative;
+  }
+  #editor pre code.hljs {
+    padding: 1em;
+    border-radius: 6px;
+  }
+  /* Language label badge */
+  #editor pre::after {
+    content: attr(data-language);
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 11px;
+    font-family: -apple-system, sans-serif;
+    color: rgba(128,128,128,0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+  }
+
+  /* Find & Replace highlights */
+  .inkwell-find-highlight {
+    background: rgba(255, 220, 0, 0.4);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .inkwell-find-active {
+    background: rgba(255, 140, 0, 0.6);
+    box-shadow: 0 0 0 2px rgba(255, 140, 0, 0.3);
+  }
+
+  /* Highlight (==text==) */
+  mark:not(.inkwell-find-highlight):not(.inkwell-find-active) {
+    background: rgba(255, 230, 0, 0.35);
+    border-radius: 2px;
+    padding: 0 2px;
+  }
+
+  /* ========== Table Enhanced Styles ========== */
+  .editor-container {
+    position: relative; /* anchor for toolbar absolute positioning */
+  }
+  #editor table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    position: relative;
+  }
+  #editor th, #editor td {
+    border: 1px solid var(--border, #d0d0d0);
+    padding: 8px 12px;
+    min-width: 100px;
+    vertical-align: middle;
+    text-align: center;
+    position: relative;
+    word-wrap: break-word;
+  }
+  #editor th {
+    background: var(--bg-secondary, #f5f5f5);
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+  }
+  /* Sort indicator */
+  #editor th[data-sort="asc"]::after { content: ' ▲'; font-size: 10px; opacity: 0.5; }
+  #editor th[data-sort="desc"]::after { content: ' ▼'; font-size: 10px; opacity: 0.5; }
+  /* Active cell highlight */
+  #editor td:focus, #editor th:focus {
+    outline: 2px solid var(--accent, #0066cc);
+    outline-offset: -2px;
+  }
+  /* Column resize handle */
+  .inkwell-col-resize {
+    position: absolute;
+    top: 0;
+    right: -2px;
+    width: 5px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+    user-select: none;
+  }
+  .inkwell-col-resize:hover,
+  .inkwell-col-resize.active {
+    background: var(--accent, #0066cc);
+    opacity: 0.4;
+  }
+
+  /* Table floating toolbar */
+  .inkwell-table-toolbar {
+    position: absolute;
+    display: flex;
+    gap: 2px;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border, #d0d0d0);
+    border-radius: 6px;
+    padding: 3px 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    z-index: 100;
+    font-size: 12px;
+    font-family: -apple-system, sans-serif;
+  }
+  .inkwell-table-toolbar button {
+    background: none;
+    border: none;
+    padding: 3px 7px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-primary, #333);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .inkwell-table-toolbar button:hover {
+    background: var(--bg-secondary, #f0f0f0);
+  }
+  .inkwell-table-toolbar .separator {
+    width: 1px;
+    background: var(--border, #d0d0d0);
+    margin: 2px 3px;
+  }
+
+  /* Alignment classes */
+  #editor td.align-center, #editor th.align-center { text-align: center; }
+  #editor td.align-right, #editor th.align-right { text-align: right; }
+  #editor td.align-left, #editor th.align-left { text-align: left; }
+
+  @media (prefers-color-scheme: dark) {
+    .inkwell-table-toolbar {
+      background: #2a2a2a;
+      border-color: #555;
+    }
+    .inkwell-table-toolbar button { color: #ddd; }
+    .inkwell-table-toolbar button:hover { background: #444; }
+  }
+</style>
+</head>
+<body>
+<div class="editor-container">
+  <div id="editor" contenteditable="true"></div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ----------------------------------------------------------
+  // Markdown Parser: Markdown → HTML
+  // ----------------------------------------------------------
+  const MarkdownParser = {
+    parse(md) {
+      if (!md || md.trim() === '') return '<p class="is-editor-empty"></p>';
+      let html = '';
+      const lines = md.split('\n');
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+
+        // Fenced code block
+        if (line.match(/^```/)) {
+          const lang = line.slice(3).trim();
+          let code = '';
+          i++;
+          while (i < lines.length && !lines[i].match(/^```/)) {
+            code += this.escapeHtml(lines[i]) + '\n';
+            i++;
+          }
+          i++;
+          html += '<pre><code' + (lang ? ' class="language-' + lang + '"' : '') + '>' + code.replace(/\n$/, '') + '</code></pre>\n';
+          continue;
+        }
+
+        // Horizontal rule
+        if (line.match(/^(---|\*\*\*|___)\s*$/)) {
+          html += '<hr>\n';
+          i++;
+          continue;
+        }
+
+        // Heading
+        const hm = line.match(/^(#{1,6})\s+(.+)/);
+        if (hm) {
+          html += '<h' + hm[1].length + '>' + this.parseInline(hm[2]) + '</h' + hm[1].length + '>\n';
+          i++;
+          continue;
+        }
+
+        // Table
+        if (i + 1 < lines.length && lines[i + 1] && lines[i + 1].match(/^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/)) {
+          const headerCells = this.parseTableRow(line);
+          const sepCells = this.parseTableRow(lines[i + 1]);
+          // Parse alignment from separator
+          const aligns = sepCells.map(s => {
+            s = s.trim();
+            if (s.startsWith(':') && s.endsWith(':')) return 'center';
+            if (s.endsWith(':')) return 'right';
+            return 'left';
+          });
+          i += 2;
+          let tableHtml = '<table><thead><tr>';
+          headerCells.forEach((c, j) => {
+            const align = aligns[j] || 'left';
+            const style = align !== 'left' ? ' style="text-align:' + align + '"' : '';
+            tableHtml += '<th' + style + '>' + this.parseInline(c) + '</th>';
+          });
+          tableHtml += '</tr></thead><tbody>';
+          while (i < lines.length && lines[i].includes('|')) {
+            const cells = this.parseTableRow(lines[i]);
+            tableHtml += '<tr>';
+            cells.forEach((c, j) => {
+              const align = aligns[j] || 'left';
+              const style = align !== 'left' ? ' style="text-align:' + align + '"' : '';
+              tableHtml += '<td' + style + '>' + this.parseInline(c) + '</td>';
+            });
+            tableHtml += '</tr>';
+            i++;
+          }
+          tableHtml += '</tbody></table>\n';
+          html += tableHtml;
+          continue;
+        }
+
+        // Blockquote
+        if (line.match(/^>\s?/)) {
+          let ql = [];
+          while (i < lines.length && lines[i].match(/^>\s?/)) {
+            ql.push(lines[i].replace(/^>\s?/, ''));
+            i++;
+          }
+          html += '<blockquote>' + this.parse(ql.join('\n')) + '</blockquote>\n';
+          continue;
+        }
+
+        // Task list
+        if (line.match(/^[-*]\s+\[[ xX]\]/)) {
+          html += '<ul data-type="taskList">\n';
+          while (i < lines.length && lines[i].match(/^[-*]\s+\[[ xX]\]/)) {
+            const tm = lines[i].match(/^[-*]\s+\[([ xX])\]\s*(.*)/);
+            if (tm) {
+              const checked = tm[1].toLowerCase() === 'x';
+              html += '<li data-type="taskItem" data-checked="' + checked + '">';
+              html += '<input type="checkbox"' + (checked ? ' checked' : '') + '>';
+              html += '<span>' + this.parseInline(tm[2]) + '</span></li>\n';
+            }
+            i++;
+          }
+          html += '</ul>\n';
+          continue;
+        }
+
+        // Unordered list
+        if (line.match(/^[-*+]\s+/)) {
+          html += '<ul>\n';
+          while (i < lines.length && lines[i].match(/^[-*+]\s+/)) {
+            const content = lines[i].replace(/^[-*+]\s+/, '');
+            html += '<li>' + this.parseInline(content) + '</li>\n';
+            i++;
+          }
+          html += '</ul>\n';
+          continue;
+        }
+
+        // Ordered list (tolerant of single blank lines between items)
+        if (line.match(/^\d+\.\s+/)) {
+          const startNum = parseInt(line.match(/^(\d+)\./)[1]);
+          html += '<ol' + (startNum !== 1 ? ' start="' + startNum + '"' : '') + '>\n';
+          while (i < lines.length) {
+            if (lines[i].match(/^\d+\.\s+/)) {
+              const content = lines[i].replace(/^\d+\.\s+/, '');
+              html += '<li>' + this.parseInline(content) + '</li>\n';
+              i++;
+            } else if (lines[i].trim() === '' && i + 1 < lines.length && lines[i + 1].match(/^\d+\.\s+/)) {
+              // Skip blank line between numbered items
+              i++;
+            } else {
+              break;
+            }
+          }
+          html += '</ol>\n';
+          continue;
+        }
+
+        // Empty line
+        if (line.trim() === '') { i++; continue; }
+
+        // Paragraph
+        html += '<p>' + this.parseInline(line) + '</p>\n';
+        i++;
+      }
+      return html;
+    },
+
+    parseInline(text) {
+      if (!text) return '';
+      text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
+      text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+      text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
+      text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      text = text.replace(/_(.+?)_/g, '<em>$1</em>');
+      text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
+      text = text.replace(/==(.+?)==/g, '<mark>$1</mark>');
+      text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+      return text;
+    },
+
+    parseTableRow(line) {
+      return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+    },
+
+    escapeHtml(text) {
+      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+      return text.replace(/[&<>"']/g, c => map[c]);
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Markdown Serializer: HTML → Markdown
+  // ----------------------------------------------------------
+  const MarkdownSerializer = {
+    serialize(el) {
+      let md = '';
+      const children = el.childNodes;
+      for (let i = 0; i < children.length; i++) {
+        md += this.serializeNode(children[i]);
+      }
+      return md.replace(/\n{3,}/g, '\n\n').trim();
+    },
+
+    serializeNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const tag = node.tagName.toLowerCase();
+      const inner = this.serializeChildren(node);
+
+      switch (tag) {
+        case 'p': return inner + '\n\n';
+        case 'h1': return '# ' + inner + '\n\n';
+        case 'h2': return '## ' + inner + '\n\n';
+        case 'h3': return '### ' + inner + '\n\n';
+        case 'h4': return '#### ' + inner + '\n\n';
+        case 'h5': return '##### ' + inner + '\n\n';
+        case 'h6': return '###### ' + inner + '\n\n';
+        case 'strong': case 'b': return '**' + inner + '**';
+        case 'em': case 'i': return '*' + inner + '*';
+        case 'del': case 's': return '~~' + inner + '~~';
+        case 'mark':
+          if (node.classList.contains('inkwell-find-highlight')) return inner;
+          return '==' + inner + '==';
+        case 'code':
+          if (node.parentNode && node.parentNode.tagName === 'PRE') return inner;
+          return '`' + inner + '`';
+        case 'pre': {
+          const codeEl = node.querySelector('code');
+          let lang = '';
+          if (codeEl) {
+            const langMatch = codeEl.className.match(/language-(\w+)/);
+            if (langMatch) lang = langMatch[1];
+          }
+          const code = codeEl ? codeEl.textContent : node.textContent;
+          return '```' + lang + '\n' + code + '\n```\n\n';
+        }
+        case 'blockquote':
+          return inner.split('\n').filter(l => l.trim()).map(l => '> ' + l).join('\n') + '\n\n';
+        case 'ul':
+          if (node.getAttribute('data-type') === 'taskList') return this.serializeTaskList(node) + '\n';
+          return this.serializeList(node, '-') + '\n';
+        case 'ol': return this.serializeList(node, '1.') + '\n';
+        case 'li': return inner;
+        case 'a': return '[' + inner + '](' + (node.getAttribute('href') || '') + ')';
+        case 'img': return '![' + (node.getAttribute('alt') || '') + '](' + (node.getAttribute('src') || '') + ')';
+        case 'hr': return '---\n\n';
+        case 'br': return '\n';
+        case 'table': return this.serializeTable(node) + '\n\n';
+        case 'input': return '';
+        case 'span': return inner;
+        case 'div': return inner + '\n';
+        default: return inner;
+      }
+    },
+
+    serializeChildren(node) {
+      let md = '';
+      for (let i = 0; i < node.childNodes.length; i++) md += this.serializeNode(node.childNodes[i]);
+      return md;
+    },
+
+    serializeList(ul, marker) {
+      let md = '';
+      ul.querySelectorAll(':scope > li').forEach((li, idx) => {
+        const prefix = marker === '1.' ? (idx + 1) + '. ' : marker + ' ';
+        md += prefix + this.serializeChildren(li).trim() + '\n';
+      });
+      return md;
+    },
+
+    serializeTaskList(ul) {
+      let md = '';
+      ul.querySelectorAll(':scope > li').forEach(li => {
+        const checked = li.getAttribute('data-checked') === 'true' ||
+                        (li.querySelector('input[type="checkbox"]') || {}).checked;
+        const text = li.querySelector('span') ? li.querySelector('span').textContent : li.textContent;
+        md += '- [' + (checked ? 'x' : ' ') + '] ' + text.trim() + '\n';
+      });
+      return md;
+    },
+
+    serializeTable(table) {
+      let md = '';
+      const thead = table.querySelector('thead');
+      const tbody = table.querySelector('tbody');
+      if (thead) {
+        const headerRow = thead.querySelector('tr');
+        if (headerRow) {
+          const cells = Array.from(headerRow.querySelectorAll('th, td'));
+          md += '| ' + cells.map(c => c.textContent.trim()).join(' | ') + ' |\n';
+          // Alignment markers (default to center since our CSS default is center)
+          md += '| ' + cells.map(c => {
+            const align = c.style.textAlign || 'center';
+            if (align === 'center') return ':---:';
+            if (align === 'right') return '---:';
+            return '---';
+          }).join(' | ') + ' |\n';
+        }
+      }
+      if (tbody) {
+        tbody.querySelectorAll('tr').forEach(row => {
+          const cells = Array.from(row.querySelectorAll('td, th'));
+          md += '| ' + cells.map(c => c.textContent.trim() || ' ').join(' | ') + ' |\n';
+        });
+      }
+      return md;
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Live Converter: Real-time Markdown → HTML conversion
+  // Converts markdown syntax as you type, Typora-style.
+  // ----------------------------------------------------------
+  const LiveConverter = {
+    editor: null,
+
+    init(editor) {
+      this.editor = editor;
+    },
+
+    // Called on every input event. Checks the current block for
+    // markdown patterns and converts them to rendered HTML.
+    onInput(e) {
+      // Don't process during composition (IME input)
+      if (e && e.isComposing) return;
+
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+
+      const range = sel.getRangeAt(0);
+      const block = this.getParentBlock(range.startContainer);
+      if (!block) return;
+
+      // Don't convert inside code blocks
+      if (block.tagName === 'PRE' || block.closest('pre')) return;
+
+      // Check for block-level conversions first (on Enter)
+      // These are handled in onEnter() instead
+
+      // Check for inline conversions in current text node
+      this.convertInlinePatterns(block);
+    },
+
+    // Called when Enter is pressed. Checks if the current line
+    // starts with a block-level markdown pattern.
+    onEnter(e) {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return false;
+
+      const range = sel.getRangeAt(0);
+      const block = this.getParentBlock(range.startContainer);
+      if (!block || block.tagName === 'PRE' || block.closest('pre')) return false;
+
+      // Only process <p> elements (not already converted blocks)
+      if (block.tagName !== 'P' && block.tagName !== 'DIV') return false;
+
+      const text = block.textContent;
+
+      // --- Heading: # ## ### #### ##### ######
+      const headingMatch = text.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        e.preventDefault();
+        const level = headingMatch[1].length;
+        const content = headingMatch[2];
+        const heading = document.createElement('h' + level);
+        heading.textContent = content || '\u200B';
+        block.parentNode.replaceChild(heading, block);
+        // Add empty paragraph after heading
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        heading.parentNode.insertBefore(p, heading.nextSibling);
+        this.setCursorAt(p, 0);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      // --- Horizontal rule: --- or *** or ___
+      if (/^(---|___|(\*\*\*))$/.test(text.trim())) {
+        e.preventDefault();
+        const hr = document.createElement('hr');
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        block.parentNode.replaceChild(hr, block);
+        hr.parentNode.insertBefore(p, hr.nextSibling);
+        this.setCursorAt(p, 0);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      // --- Fenced code block: ```
+      if (/^```/.test(text.trim())) {
+        e.preventDefault();
+        const lang = text.trim().slice(3).trim();
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        if (lang) {
+          code.className = 'language-' + lang;
+          pre.setAttribute('data-language', lang);
+        }
+        code.textContent = '\n';
+        pre.appendChild(code);
+        block.parentNode.replaceChild(pre, block);
+        this.setCursorAt(code, 0);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      // --- Blockquote: >
+      if (/^>\s/.test(text)) {
+        e.preventDefault();
+        const content = text.replace(/^>\s?/, '');
+        const bq = document.createElement('blockquote');
+        const inner = document.createElement('p');
+        inner.textContent = content || '\u200B';
+        bq.appendChild(inner);
+        block.parentNode.replaceChild(bq, block);
+        // Add empty paragraph after
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        bq.parentNode.insertBefore(p, bq.nextSibling);
+        this.setCursorAt(p, 0);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      // --- Task list: - [ ] or - [x]
+      const taskMatch = text.match(/^[-*]\s+\[([ xX])\]\s*(.*)/);
+      if (taskMatch) {
+        e.preventDefault();
+        const checked = taskMatch[1].toLowerCase() === 'x';
+        const content = taskMatch[2];
+        const ul = document.createElement('ul');
+        ul.setAttribute('data-type', 'taskList');
+        const li = document.createElement('li');
+        li.setAttribute('data-type', 'taskItem');
+        li.setAttribute('data-checked', String(checked));
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = checked;
+        cb.addEventListener('change', () => {
+          li.setAttribute('data-checked', String(cb.checked));
+          this.editor.onContentChange();
+        });
+        const span = document.createElement('span');
+        span.textContent = content || '\u200B';
+        li.appendChild(cb);
+        li.appendChild(span);
+        ul.appendChild(li);
+        block.parentNode.replaceChild(ul, block);
+        this.setCursorAtEnd(span);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      // --- Unordered list: - or * or +
+      const ulMatch = text.match(/^([-*+])\s+(.*)$/);
+      if (ulMatch) {
+        e.preventDefault();
+        const content = ulMatch[2];
+        const ul = document.createElement('ul');
+        const li = document.createElement('li');
+        li.textContent = content || '\u200B';
+        ul.appendChild(li);
+        block.parentNode.replaceChild(ul, block);
+        this.setCursorAtEnd(li);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      // --- Ordered list: 1.
+      const olMatch = text.match(/^(\d+)\.\s+(.*)$/);
+      if (olMatch) {
+        e.preventDefault();
+        const content = olMatch[2];
+        const ol = document.createElement('ol');
+        const li = document.createElement('li');
+        li.textContent = content || '\u200B';
+        ol.appendChild(li);
+        block.parentNode.replaceChild(ol, block);
+        this.setCursorAtEnd(li);
+        this.editor.onContentChange();
+        return true;
+      }
+
+      return false;
+    },
+
+    // Scan a block element for inline markdown patterns and convert them.
+    convertInlinePatterns(block) {
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      let textNode;
+
+      while (textNode = walker.nextNode()) {
+        // Skip text inside already-formatted elements
+        const parent = textNode.parentNode;
+        if (parent.tagName === 'CODE' || parent.tagName === 'PRE' ||
+            parent.tagName === 'A' || parent.tagName === 'STRONG' ||
+            parent.tagName === 'EM' || parent.tagName === 'DEL' ||
+            parent.tagName === 'B' || parent.tagName === 'I' ||
+            parent.tagName === 'S' || parent.tagName === 'MARK') continue;
+
+        const text = textNode.textContent;
+        let converted = false;
+
+        // Order matters — check longer/more specific patterns first
+
+        // Bold+Italic: ***text***
+        converted = converted || this.tryConvertInline(textNode, /\*\*\*(.+?)\*\*\*/, (match, content) => {
+          const strong = document.createElement('strong');
+          const em = document.createElement('em');
+          em.textContent = content;
+          strong.appendChild(em);
+          return strong;
+        });
+        if (converted) break;
+
+        // Bold: **text**
+        converted = this.tryConvertInline(textNode, /\*\*(.+?)\*\*/, (match, content) => {
+          const el = document.createElement('strong');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Bold: __text__
+        converted = this.tryConvertInline(textNode, /__(.+?)__/, (match, content) => {
+          const el = document.createElement('strong');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Italic: *text*  (but not ** which is bold)
+        converted = this.tryConvertInline(textNode, /(?<!\*)\*([^*]+?)\*(?!\*)/, (match, content) => {
+          const el = document.createElement('em');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Italic: _text_  (but not __ which is bold)
+        converted = this.tryConvertInline(textNode, /(?<!_)_([^_]+?)_(?!_)/, (match, content) => {
+          const el = document.createElement('em');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Strikethrough: ~~text~~
+        converted = this.tryConvertInline(textNode, /~~(.+?)~~/, (match, content) => {
+          const el = document.createElement('del');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Highlight: ==text==
+        converted = this.tryConvertInline(textNode, /==(.+?)==/, (match, content) => {
+          const el = document.createElement('mark');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Inline code: `text`
+        converted = this.tryConvertInline(textNode, /`([^`]+?)`/, (match, content) => {
+          const el = document.createElement('code');
+          el.textContent = content;
+          return el;
+        });
+        if (converted) break;
+
+        // Link: [text](url)
+        converted = this.tryConvertInline(textNode, /\[([^\]]+)\]\(([^)]+)\)/, (match, text, url) => {
+          const el = document.createElement('a');
+          el.href = url;
+          el.textContent = text;
+          el.setAttribute('target', '_blank');
+          return el;
+        });
+        if (converted) break;
+
+        // Image: ![alt](url)
+        converted = this.tryConvertInline(textNode, /!\[([^\]]*)\]\(([^)]+)\)/, (match, alt, url) => {
+          const el = document.createElement('img');
+          el.src = url;
+          el.alt = alt;
+          return el;
+        });
+        if (converted) break;
+      }
+    },
+
+    // Try to find and convert a pattern in a text node.
+    // Returns true if a conversion was made.
+    tryConvertInline(textNode, regex, createEl) {
+      const text = textNode.textContent;
+      const match = regex.exec(text);
+      if (!match) return false;
+
+      // Don't convert if cursor is inside the match (user is still typing)
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const cursorNode = sel.getRangeAt(0).startContainer;
+        const cursorOffset = sel.getRangeAt(0).startOffset;
+        if (cursorNode === textNode) {
+          const matchEnd = match.index + match[0].length;
+          // Only convert if cursor is at or past the end of the match
+          if (cursorOffset < matchEnd) return false;
+        }
+      }
+
+      // Split text node: before | element | after
+      const before = text.substring(0, match.index);
+      const after = text.substring(match.index + match[0].length);
+
+      const newEl = createEl(match[0], ...match.slice(1));
+      const parent = textNode.parentNode;
+
+      // Build fragment: [beforeText, newElement, afterText]
+      const frag = document.createDocumentFragment();
+      if (before) frag.appendChild(document.createTextNode(before));
+      frag.appendChild(newEl);
+      const afterNode = document.createTextNode(after || '\u200B');
+      frag.appendChild(afterNode);
+
+      parent.replaceChild(frag, textNode);
+
+      // Place cursor after the converted element
+      const range = document.createRange();
+      range.setStart(afterNode, after ? 0 : 1);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      this.editor.onContentChange();
+      return true;
+    },
+
+    // Get the nearest block-level parent of a node
+    getParentBlock(node) {
+      const blockTags = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+                         'LI', 'BLOCKQUOTE', 'PRE', 'DIV', 'TD', 'TH'];
+      while (node && node !== this.editor.element) {
+        if (node.nodeType === Node.ELEMENT_NODE && blockTags.includes(node.tagName)) {
+          return node;
+        }
+        node = node.parentNode;
+      }
+      return null;
+    },
+
+    setCursorAt(node, offset) {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      if (node.childNodes.length > 0 && offset === 0) {
+        range.setStart(node.childNodes[0] || node, 0);
+      } else {
+        range.setStart(node, offset);
+      }
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    },
+
+    setCursorAtEnd(node) {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Table Manager: Enhanced table editing & data display
+  // ----------------------------------------------------------
+  const TableManager = {
+    editor: null,
+    activeTable: null,
+    toolbar: null,
+    resizing: null,
+
+    init(editor) {
+      this.editor = editor;
+      // Listen for clicks to detect table focus
+      editor.element.addEventListener('click', (e) => this.onClick(e));
+      // Listen for keydown inside tables
+      editor.element.addEventListener('keydown', (e) => this.onKeyDown(e));
+      // Dismiss toolbar on click outside
+      document.addEventListener('click', (e) => {
+        if (this.toolbar && !this.toolbar.contains(e.target) && !this.getTableFromEvent(e)) {
+          this.hideToolbar();
+        }
+      });
+    },
+
+    // --- Event Handlers ---
+
+    onClick(e) {
+      const table = this.getTableFromEvent(e);
+      if (table) {
+        this.activeTable = table;
+        this.showToolbar(table);
+        this.setupResizeHandles(table);
+
+        // Sort on header click
+        const th = e.target.closest('th');
+        if (th && !e.target.classList.contains('inkwell-col-resize')) {
+          this.sortByColumn(table, th);
+        }
+      }
+    },
+
+    onKeyDown(e) {
+      const cell = this.getCurrentCell();
+      if (!cell) return;
+      const table = cell.closest('table');
+      if (!table) return;
+
+      // Tab: move to next cell
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.shiftKey) {
+          this.moveToPrevCell(cell, table);
+        } else {
+          this.moveToNextCell(cell, table);
+        }
+        return;
+      }
+
+      // Enter inside table cell: prevent new paragraph, move to cell below
+      if (e.key === 'Enter' && !e.shiftKey) {
+        const isInTable = cell.closest('table');
+        if (isInTable) {
+          e.preventDefault();
+          this.moveToCellBelow(cell, table);
+          return;
+        }
+      }
+
+      // Escape: deselect table, move cursor after table
+      if (e.key === 'Escape') {
+        this.hideToolbar();
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        table.parentNode.insertBefore(p, table.nextSibling);
+        const range = document.createRange();
+        range.setStart(p, 0);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    },
+
+    // --- Navigation ---
+
+    getCurrentCell() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return null;
+      let node = sel.getRangeAt(0).startContainer;
+      while (node && node !== this.editor.element) {
+        if (node.tagName === 'TD' || node.tagName === 'TH') return node;
+        node = node.parentNode;
+      }
+      return null;
+    },
+
+    moveToNextCell(cell, table) {
+      const cells = Array.from(table.querySelectorAll('th, td'));
+      const idx = cells.indexOf(cell);
+      if (idx < cells.length - 1) {
+        this.focusCell(cells[idx + 1]);
+      } else {
+        // At last cell — add new row
+        this.addRow(table, 'below');
+        const newCells = Array.from(table.querySelectorAll('td'));
+        const lastRow = table.querySelector('tbody tr:last-child');
+        if (lastRow) this.focusCell(lastRow.querySelector('td'));
+      }
+    },
+
+    moveToPrevCell(cell, table) {
+      const cells = Array.from(table.querySelectorAll('th, td'));
+      const idx = cells.indexOf(cell);
+      if (idx > 0) this.focusCell(cells[idx - 1]);
+    },
+
+    moveToCellBelow(cell, table) {
+      const row = cell.closest('tr');
+      const cellIdx = Array.from(row.children).indexOf(cell);
+      const nextRow = row.nextElementSibling || (row.closest('thead') ? table.querySelector('tbody tr') : null);
+      if (nextRow) {
+        const target = nextRow.children[cellIdx];
+        if (target) this.focusCell(target);
+      }
+    },
+
+    focusCell(cell) {
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      cell.focus();
+    },
+
+    // --- Floating Toolbar ---
+
+    showToolbar(table) {
+      this.hideToolbar();
+      const tb = document.createElement('div');
+      tb.className = 'inkwell-table-toolbar';
+      tb.contentEditable = 'false';
+
+      const btns = [
+        { label: '+ Row ↑', action: () => this.addRow(table, 'above') },
+        { label: '+ Row ↓', action: () => this.addRow(table, 'below') },
+        { sep: true },
+        { label: '+ Col ←', action: () => this.addCol(table, 'before') },
+        { label: '+ Col →', action: () => this.addCol(table, 'after') },
+        { sep: true },
+        { label: '⊖ Row', action: () => this.deleteRow(table) },
+        { label: '⊖ Col', action: () => this.deleteCol(table) },
+        { sep: true },
+        { label: '⇤', title: 'Align Left', action: () => this.alignCol(table, 'left') },
+        { label: '⇔', title: 'Align Center', action: () => this.alignCol(table, 'center') },
+        { label: '⇥', title: 'Align Right', action: () => this.alignCol(table, 'right') },
+      ];
+
+      btns.forEach(b => {
+        if (b.sep) {
+          const sep = document.createElement('div');
+          sep.className = 'separator';
+          tb.appendChild(sep);
+          return;
+        }
+        const btn = document.createElement('button');
+        btn.textContent = b.label;
+        if (b.title) btn.title = b.title;
+        btn.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          b.action();
+          this.editor.onContentChange();
+        });
+        tb.appendChild(btn);
+      });
+
+      // Append to editor-container (outside contentEditable) for proper rendering
+      const container = document.querySelector('.editor-container');
+
+      // Position above table, relative to container
+      const tableRect = table.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      tb.style.left = Math.max(0, tableRect.left - containerRect.left) + 'px';
+      tb.style.top = (tableRect.top - containerRect.top - 38) + 'px';
+
+      container.appendChild(tb);
+      this.toolbar = tb;
+    },
+
+    hideToolbar() {
+      if (this.toolbar) {
+        this.toolbar.remove();
+        this.toolbar = null;
+      }
+      this.activeTable = null;
+    },
+
+    // --- Add / Delete Rows & Columns ---
+
+    addRow(table, position) {
+      const cell = this.getCurrentCell();
+      const tbody = table.querySelector('tbody') || table;
+      const colCount = (table.querySelector('tr') || {}).children?.length || 3;
+      const newRow = document.createElement('tr');
+      for (let i = 0; i < colCount; i++) {
+        const td = document.createElement('td');
+        td.innerHTML = '&nbsp;';
+        newRow.appendChild(td);
+      }
+
+      if (position === 'above' && cell) {
+        const row = cell.closest('tr');
+        if (row && row.closest('tbody')) {
+          row.parentNode.insertBefore(newRow, row);
+        } else {
+          // Above header — insert as first tbody row
+          const firstTbodyRow = tbody.querySelector('tr');
+          if (firstTbodyRow) tbody.insertBefore(newRow, firstTbodyRow);
+          else tbody.appendChild(newRow);
+        }
+      } else {
+        if (cell) {
+          const row = cell.closest('tr');
+          if (row && row.closest('tbody')) {
+            row.parentNode.insertBefore(newRow, row.nextSibling);
+          } else {
+            // After header row — insert as first tbody row
+            const firstTbodyRow = tbody.querySelector('tr');
+            if (firstTbodyRow) tbody.insertBefore(newRow, firstTbodyRow);
+            else tbody.appendChild(newRow);
+          }
+        } else {
+          tbody.appendChild(newRow);
+        }
+      }
+      this.focusCell(newRow.querySelector('td'));
+    },
+
+    deleteRow(table) {
+      const cell = this.getCurrentCell();
+      if (!cell) return;
+      const row = cell.closest('tr');
+      if (!row) return;
+      // Don't delete header row
+      if (row.closest('thead')) return;
+      const tbody = table.querySelector('tbody');
+      if (tbody && tbody.querySelectorAll('tr').length <= 1) return; // keep at least 1 row
+      const prevRow = row.previousElementSibling || row.nextElementSibling;
+      row.remove();
+      if (prevRow) this.focusCell(prevRow.querySelector('td, th'));
+    },
+
+    addCol(table, position) {
+      const cell = this.getCurrentCell();
+      let colIdx = 0;
+      if (cell) {
+        colIdx = Array.from(cell.closest('tr').children).indexOf(cell);
+      }
+      const insertIdx = position === 'after' ? colIdx + 1 : colIdx;
+
+      table.querySelectorAll('tr').forEach(row => {
+        const newCell = document.createElement(row.closest('thead') ? 'th' : 'td');
+        newCell.innerHTML = row.closest('thead') ? 'Header' : '&nbsp;';
+        const ref = row.children[insertIdx];
+        if (ref) row.insertBefore(newCell, ref);
+        else row.appendChild(newCell);
+      });
+      this.setupResizeHandles(table);
+    },
+
+    deleteCol(table) {
+      const cell = this.getCurrentCell();
+      if (!cell) return;
+      const colIdx = Array.from(cell.closest('tr').children).indexOf(cell);
+      const colCount = table.querySelector('tr').children.length;
+      if (colCount <= 1) return; // keep at least 1 column
+
+      table.querySelectorAll('tr').forEach(row => {
+        if (row.children[colIdx]) row.children[colIdx].remove();
+      });
+      this.setupResizeHandles(table);
+    },
+
+    // --- Column Alignment ---
+
+    alignCol(table, alignment) {
+      const cell = this.getCurrentCell();
+      if (!cell) return;
+      const colIdx = Array.from(cell.closest('tr').children).indexOf(cell);
+
+      table.querySelectorAll('tr').forEach(row => {
+        const c = row.children[colIdx];
+        if (c) {
+          c.classList.remove('align-left', 'align-center', 'align-right');
+          if (alignment !== 'left') c.classList.add('align-' + alignment);
+          c.style.textAlign = alignment;
+        }
+      });
+    },
+
+    // --- Column Sorting ---
+
+    sortByColumn(table, th) {
+      const thead = table.querySelector('thead');
+      const tbody = table.querySelector('tbody');
+      if (!thead || !tbody) return;
+
+      const colIdx = Array.from(th.closest('tr').children).indexOf(th);
+      const currentSort = th.dataset.sort || '';
+
+      // Cycle: none → asc → desc → none
+      let newSort;
+      if (currentSort === '') newSort = 'asc';
+      else if (currentSort === 'asc') newSort = 'desc';
+      else newSort = '';
+
+      // Clear all sort indicators
+      thead.querySelectorAll('th').forEach(h => delete h.dataset.sort);
+      if (newSort) th.dataset.sort = newSort;
+
+      if (!newSort) return; // reset to original order — skip
+
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const aText = (a.children[colIdx]?.textContent || '').trim();
+        const bText = (b.children[colIdx]?.textContent || '').trim();
+        // Try numeric sort first
+        const aNum = parseFloat(aText);
+        const bNum = parseFloat(bText);
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return newSort === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+        // String sort
+        const cmp = aText.localeCompare(bText, undefined, { sensitivity: 'base' });
+        return newSort === 'asc' ? cmp : -cmp;
+      });
+
+      rows.forEach(r => tbody.appendChild(r));
+      this.editor.onContentChange();
+    },
+
+    // --- Column Resize ---
+
+    setupResizeHandles(table) {
+      // Remove existing handles
+      table.querySelectorAll('.inkwell-col-resize').forEach(h => h.remove());
+
+      const headerCells = table.querySelectorAll('thead th');
+      headerCells.forEach((th, idx) => {
+        if (idx === headerCells.length - 1) return; // no handle on last column
+        const handle = document.createElement('div');
+        handle.className = 'inkwell-col-resize';
+        handle.contentEditable = 'false';
+        th.style.position = 'relative';
+        th.appendChild(handle);
+
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.startResize(e, table, idx);
+        });
+      });
+    },
+
+    startResize(e, table, colIdx) {
+      const startX = e.clientX;
+      const headerCells = table.querySelectorAll('thead th');
+      const startWidth = headerCells[colIdx].offsetWidth;
+      const handle = headerCells[colIdx].querySelector('.inkwell-col-resize');
+      if (handle) handle.classList.add('active');
+
+      const onMouseMove = (e) => {
+        const diff = e.clientX - startX;
+        const newWidth = Math.max(40, startWidth + diff);
+        // Apply width to all cells in this column
+        table.querySelectorAll('tr').forEach(row => {
+          const cell = row.children[colIdx];
+          if (cell) cell.style.width = newWidth + 'px';
+        });
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        if (handle) handle.classList.remove('active');
+        this.editor.onContentChange();
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+
+    // --- Helpers ---
+
+    getTableFromEvent(e) {
+      let node = e.target;
+      while (node && node !== this.editor.element) {
+        if (node.tagName === 'TABLE') return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Editor Core
+  // ----------------------------------------------------------
+  const Editor = {
+    element: null,
+    lastContent: '',
+
+    init() {
+      this.element = document.getElementById('editor');
+      this.element.setAttribute('contenteditable', 'true');
+      this.element.classList.add('ProseMirror');
+
+      // Initialize live converter
+      LiveConverter.init(this);
+
+      // Initialize table manager
+      TableManager.init(this);
+
+      this.element.addEventListener('input', (e) => {
+        this.onContentChange();
+        // Run live conversion after content change is reported
+        LiveConverter.onInput(e);
+      });
+
+      this.element.addEventListener('keydown', (e) => {
+        // Handle Enter for block-level conversions
+        if (e.key === 'Enter' && !e.shiftKey) {
+          if (LiveConverter.onEnter(e)) return;
+        }
+      });
+
+      document.addEventListener('selectionchange', () => this.updateSelectionState());
+
+      this.setupKeyboardShortcuts();
+
+      // Listen for dark mode changes to swap hljs theme
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        this.updateDarkModeTheme();
+      });
+      this.updateDarkModeTheme();
+
+      this.postMessage('editorReady', {});
+    },
+
+    // --- Content ---
+
+    onContentChange() {
+      const md = this.getMarkdown();
+      if (md !== this.lastContent) {
+        this.lastContent = md;
+        this.postMessage('contentChange', { content: md });
+      }
+    },
+
+    loadMarkdown(markdown) {
+      this.lastContent = markdown;
+      this.element.innerHTML = MarkdownParser.parse(markdown);
+      this.element.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => this.onContentChange());
+      });
+      this.highlightCodeBlocks();
+      // Set up table resize handles
+      this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
+    },
+
+    // --- Syntax Highlighting ---
+
+    highlightCodeBlocks() {
+      if (typeof hljs === 'undefined') return;
+
+      // Find which code block the cursor is in (skip highlighting that one)
+      let activeCodeBlock = null;
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        let node = sel.getRangeAt(0).startContainer;
+        while (node && node !== this.element) {
+          if (node.tagName === 'CODE' && node.parentNode && node.parentNode.tagName === 'PRE') {
+            activeCodeBlock = node;
+            break;
+          }
+          node = node.parentNode;
+        }
+      }
+
+      this.element.querySelectorAll('pre code').forEach(block => {
+        // Don't highlight the block user is currently editing
+        if (block === activeCodeBlock) return;
+
+        // Get the plain text content
+        const plainText = block.textContent;
+
+        // Clear previous highlighting
+        if (block.dataset.highlighted === 'yes') {
+          block.textContent = plainText;
+          delete block.dataset.highlighted;
+        }
+
+        // Set language label on pre element
+        const langMatch = block.className.match(/language-(\w+)/);
+        if (langMatch) {
+          block.closest('pre').setAttribute('data-language', langMatch[1]);
+        }
+
+        try {
+          hljs.highlightElement(block);
+        } catch(e) { /* language not supported, ignore */ }
+      });
+      this.updateDarkModeTheme();
+    },
+
+    // Re-highlight all code blocks (called when cursor leaves a code block)
+    rehighlightAll() {
+      if (typeof hljs === 'undefined') return;
+      this.element.querySelectorAll('pre code').forEach(block => {
+        const plainText = block.textContent;
+        if (block.dataset.highlighted === 'yes') {
+          block.textContent = plainText;
+          delete block.dataset.highlighted;
+        }
+        const langMatch = block.className.match(/language-(\w+)/);
+        if (langMatch) {
+          block.closest('pre').setAttribute('data-language', langMatch[1]);
+        }
+        try {
+          hljs.highlightElement(block);
+        } catch(e) {}
+      });
+    },
+
+    updateDarkModeTheme() {
+      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const themeLink = document.getElementById('hljs-theme');
+      if (themeLink) {
+        const base = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/';
+        themeLink.href = isDark ? base + 'github-dark.min.css' : base + 'github.min.css';
+      }
+    },
+
+    getMarkdown() {
+      // Clear find highlights before serializing
+      const marks = this.element.querySelectorAll('.inkwell-find-highlight');
+      if (marks.length > 0) {
+        marks.forEach(m => {
+          const text = document.createTextNode(m.textContent);
+          m.parentNode.replaceChild(text, m);
+        });
+        this.element.normalize();
+      }
+      return MarkdownSerializer.serialize(this.element);
+    },
+
+    applyTheme(css) {
+      document.getElementById('theme-style').textContent = css;
+    },
+
+    // --- Keyboard Shortcuts ---
+
+    setupKeyboardShortcuts() {
+      this.element.addEventListener('keydown', (e) => {
+        const mod = e.metaKey || e.ctrlKey;
+        if (!mod) return;
+
+        const key = e.key.toLowerCase();
+        let handled = true;
+
+        if      (key === 'b' && !e.shiftKey) this.execFormat('bold');
+        else if (key === 'i' && !e.shiftKey) this.execFormat('italic');
+        else if (key === 'k' && !e.shiftKey) this.execFormat('link');
+        else if (key === 'e' && !e.shiftKey) this.execFormat('inlineCode');
+        else if (key === 'd' && e.shiftKey)  this.execFormat('strikethrough');
+        else if (key === 'e' && e.shiftKey)  this.execFormat('codeBlock');
+        else if (key === '1' && e.shiftKey)  this.execFormat('heading1');
+        else if (key === '2' && e.shiftKey)  this.execFormat('heading2');
+        else if (key === '3' && e.shiftKey)  this.execFormat('heading3');
+        else if (key === '8' && e.shiftKey)  this.execFormat('bulletList');
+        else if (key === '9' && e.shiftKey)  this.execFormat('orderedList');
+        else if (key === 'x' && e.shiftKey)  this.execFormat('taskList');
+        else if (key === "'" && e.shiftKey)  this.execFormat('blockquote');
+        else if (key === 'f' && !e.shiftKey) {
+          this.postMessage('showFindReplace', { mode: 'find' });
+        }
+        else if (key === 'h' && !e.shiftKey) {
+          this.postMessage('showFindReplace', { mode: 'replace' });
+        }
+        else handled = false;
+
+        if (handled) { e.preventDefault(); e.stopPropagation(); }
+      });
+    },
+
+    // --- Format Commands ---
+
+    execFormat(command) {
+      const sel = window.getSelection();
+      if (!sel.rangeCount && command !== 'horizontalRule') return;
+
+      switch (command) {
+        case 'bold':          document.execCommand('bold'); break;
+        case 'italic':        document.execCommand('italic'); break;
+        case 'strikethrough': document.execCommand('strikeThrough'); break;
+        case 'inlineCode':    this.toggleInlineCode(); break;
+        case 'heading1':      this.wrapBlock('h1'); break;
+        case 'heading2':      this.wrapBlock('h2'); break;
+        case 'heading3':      this.wrapBlock('h3'); break;
+        case 'heading4':      this.wrapBlock('h4'); break;
+        case 'paragraph':     this.wrapBlock('p'); break;
+        case 'bulletList':    document.execCommand('insertUnorderedList'); break;
+        case 'orderedList':   document.execCommand('insertOrderedList'); break;
+        case 'taskList':      this.insertTaskList(); break;
+        case 'codeBlock':     this.insertCodeBlock(); break;
+        case 'blockquote':    this.wrapBlock('blockquote'); break;
+        case 'horizontalRule': document.execCommand('insertHorizontalRule'); break;
+        case 'link':          this.insertLink(); break;
+        case 'image':         this.insertImage(); break;
+        case 'table':         this.insertTable(3, 3); break;
+        case 'increaseIndent': document.execCommand('indent'); break;
+        case 'decreaseIndent': document.execCommand('outdent'); break;
+      }
+      this.onContentChange();
+      this.updateSelectionState();
+    },
+
+    wrapBlock(tag) {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      let block = sel.getRangeAt(0).startContainer;
+      while (block && block !== this.element && block.nodeType !== Node.ELEMENT_NODE) block = block.parentNode;
+      while (block && block.parentNode !== this.element) block = block.parentNode;
+      if (!block || block === this.element) return;
+      if (block.tagName && block.tagName.toLowerCase() === tag) {
+        const p = document.createElement('p');
+        p.innerHTML = block.innerHTML;
+        block.parentNode.replaceChild(p, block);
+        const range = document.createRange();
+        range.selectNodeContents(p);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      const newEl = document.createElement(tag);
+      newEl.innerHTML = block.innerHTML;
+      block.parentNode.replaceChild(newEl, block);
+      const range = document.createRange();
+      range.selectNodeContents(newEl);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    },
+
+    toggleInlineCode() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      let codeEl = null;
+      let node = range.startContainer;
+      while (node && node !== this.element) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'CODE' && !node.closest('pre')) { codeEl = node; break; }
+        node = node.parentNode;
+      }
+      if (codeEl) {
+        const text = document.createTextNode(codeEl.textContent);
+        codeEl.parentNode.replaceChild(text, codeEl);
+        const r = document.createRange(); r.selectNodeContents(text); sel.removeAllRanges(); sel.addRange(r);
+      } else {
+        const selectedText = range.toString();
+        if (selectedText.length > 0) {
+          const code = document.createElement('code');
+          try { range.surroundContents(code); } catch(e) {}
+        } else {
+          const code = document.createElement('code');
+          code.textContent = '\u200B';
+          range.insertNode(code);
+          const r = document.createRange(); r.selectNodeContents(code); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
+        }
+      }
+    },
+
+    insertCodeBlock() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      let block = sel.getRangeAt(0).startContainer;
+      while (block && block !== this.element && block.nodeType !== Node.ELEMENT_NODE) block = block.parentNode;
+      while (block && block.parentNode !== this.element) block = block.parentNode;
+      if (block && block.tagName === 'PRE') {
+        const p = document.createElement('p'); p.textContent = block.textContent;
+        block.parentNode.replaceChild(p, block); return;
+      }
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = block ? block.textContent || '\n' : '\n';
+      pre.appendChild(code);
+      if (block && block !== this.element) block.parentNode.replaceChild(pre, block);
+      else this.element.appendChild(pre);
+      const range = document.createRange(); range.selectNodeContents(code); range.collapse(false);
+      sel.removeAllRanges(); sel.addRange(range);
+    },
+
+    insertTaskList() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      let block = sel.getRangeAt(0).startContainer;
+      while (block && block !== this.element && block.nodeType !== Node.ELEMENT_NODE) block = block.parentNode;
+      while (block && block.parentNode !== this.element) block = block.parentNode;
+      const ul = document.createElement('ul'); ul.setAttribute('data-type', 'taskList');
+      const li = document.createElement('li'); li.setAttribute('data-type', 'taskItem'); li.setAttribute('data-checked', 'false');
+      const cb = document.createElement('input'); cb.type = 'checkbox';
+      cb.addEventListener('change', () => this.onContentChange());
+      const span = document.createElement('span'); span.textContent = block ? block.textContent || '' : '';
+      li.appendChild(cb); li.appendChild(span); ul.appendChild(li);
+      if (block && block !== this.element) block.parentNode.replaceChild(ul, block);
+      else this.element.appendChild(ul);
+      const range = document.createRange(); range.selectNodeContents(span); range.collapse(false);
+      sel.removeAllRanges(); sel.addRange(range);
+    },
+
+    insertLink() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      this.postMessage('requestLinkInput', { selectedText: sel.toString() });
+    },
+
+    applyLink(url, text) {
+      const sel = window.getSelection();
+      const a = document.createElement('a'); a.href = url; a.textContent = text || url; a.setAttribute('target', '_blank');
+      if (sel.rangeCount) { const range = sel.getRangeAt(0); range.deleteContents(); range.insertNode(a); range.setStartAfter(a); range.collapse(true); sel.removeAllRanges(); sel.addRange(range); }
+      this.onContentChange();
+    },
+
+    insertImage() { this.postMessage('requestImageInput', {}); },
+
+    applyImage(url, alt) {
+      const img = document.createElement('img'); img.src = url; img.alt = alt || '';
+      const sel = window.getSelection();
+      if (sel.rangeCount) { const range = sel.getRangeAt(0); range.deleteContents(); range.insertNode(img); range.setStartAfter(img); range.collapse(true); sel.removeAllRanges(); sel.addRange(range); }
+      this.onContentChange();
+    },
+
+    insertTable(rows, cols) {
+      const table = document.createElement('table');
+      const thead = document.createElement('thead'); const hr = document.createElement('tr');
+      for (let j = 0; j < cols; j++) { const th = document.createElement('th'); th.textContent = 'Header ' + (j+1); hr.appendChild(th); }
+      thead.appendChild(hr); table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      for (let i = 0; i < rows - 1; i++) { const tr = document.createElement('tr'); for (let j = 0; j < cols; j++) { const td = document.createElement('td'); td.innerHTML = '&nbsp;'; tr.appendChild(td); } tbody.appendChild(tr); }
+      table.appendChild(tbody);
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        let block = sel.getRangeAt(0).startContainer;
+        while (block && block !== this.element && block.nodeType !== Node.ELEMENT_NODE) block = block.parentNode;
+        while (block && block.parentNode !== this.element) block = block.parentNode;
+        if (block && block !== this.element) block.parentNode.insertBefore(table, block.nextSibling);
+        else this.element.appendChild(table);
+      } else this.element.appendChild(table);
+      // Set up resize handles and show toolbar
+      TableManager.setupResizeHandles(table);
+      TableManager.showToolbar(table);
+      const firstTh = table.querySelector('th');
+      if (firstTh) { const range = document.createRange(); range.selectNodeContents(firstTh); sel.removeAllRanges(); sel.addRange(range); }
+      this.onContentChange();
+    },
+
+    // --- Selection State ---
+
+    updateSelectionState() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+
+      // Check if cursor is inside a code block
+      let inCodeBlock = false;
+      let node = sel.getRangeAt(0).startContainer;
+      while (node && node !== this.element) {
+        if (node.tagName === 'PRE' || (node.tagName === 'CODE' && node.parentNode && node.parentNode.tagName === 'PRE')) {
+          inCodeBlock = true;
+          break;
+        }
+        node = node.parentNode;
+      }
+
+      // If cursor left a code block, re-highlight all
+      if (!inCodeBlock && this._wasInCodeBlock) {
+        this.rehighlightAll();
+      }
+      this._wasInCodeBlock = inCodeBlock;
+
+      const formats = { bold: document.queryCommandState('bold'), italic: document.queryCommandState('italic'), strikethrough: document.queryCommandState('strikeThrough'), inlineCode: false, blockType: 'paragraph', isLink: false, linkUrl: '', headingLevel: 0 };
+      node = sel.getRangeAt(0).startContainer;
+      while (node && node !== this.element) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const tag = node.tagName.toLowerCase();
+          if (tag === 'code' && !node.closest('pre')) formats.inlineCode = true;
+          if (tag === 'a') { formats.isLink = true; formats.linkUrl = node.href || ''; }
+        }
+        node = node.parentNode;
+      }
+      node = sel.getRangeAt(0).startContainer;
+      while (node && node !== this.element) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const tag = node.tagName.toLowerCase();
+          if (/^h[1-6]$/.test(tag)) { formats.blockType = tag; formats.headingLevel = parseInt(tag[1]); break; }
+          if (tag === 'blockquote') { formats.blockType = 'blockquote'; break; }
+          if (tag === 'pre') { formats.blockType = 'codeBlock'; break; }
+          if (tag === 'li') {
+            const p = node.closest('ul, ol');
+            if (p) { if (p.tagName === 'UL') { formats.blockType = p.getAttribute('data-type') === 'taskList' ? 'taskList' : 'bulletList'; } else { formats.blockType = 'orderedList'; } }
+            break;
+          }
+        }
+        node = node.parentNode;
+      }
+      this.postMessage('selectionChange', formats);
+    },
+
+    // ============================================================
+    // Find & Replace
+    // ============================================================
+    findState: { query: '', caseSensitive: false, matches: [], currentIndex: -1 },
+
+    findInDocument(query, caseSensitive) {
+      this.clearFindHighlights();
+      if (!query) { this.findState.matches = []; this.findState.currentIndex = -1; this.postMessage('findResults', { count: 0, current: -1 }); return; }
+      this.findState.query = query; this.findState.caseSensitive = caseSensitive;
+      const flags = caseSensitive ? 'g' : 'gi';
+      const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+      const walker = document.createTreeWalker(this.element, NodeFilter.SHOW_TEXT, null);
+      const textNodes = []; let n;
+      while (n = walker.nextNode()) { if (n.parentNode.classList && n.parentNode.classList.contains('inkwell-find-highlight')) continue; if (n.textContent.length > 0) textNodes.push(n); }
+      const matches = [];
+      for (const tn of textNodes) { let m; regex.lastIndex = 0; while ((m = regex.exec(tn.textContent)) !== null) matches.push({ node: tn, index: m.index, length: m[0].length }); }
+      for (let i = matches.length - 1; i >= 0; i--) { const m = matches[i]; try { const range = document.createRange(); range.setStart(m.node, m.index); range.setEnd(m.node, m.index + m.length); const mark = document.createElement('mark'); mark.classList.add('inkwell-find-highlight'); mark.dataset.findIndex = i; range.surroundContents(mark); } catch(e) {} }
+      this.findState.matches = Array.from(this.element.querySelectorAll('.inkwell-find-highlight'));
+      this.findState.currentIndex = this.findState.matches.length > 0 ? 0 : -1;
+      if (this.findState.currentIndex >= 0) this.highlightCurrentMatch();
+      this.postMessage('findResults', { count: this.findState.matches.length, current: this.findState.currentIndex });
+    },
+    highlightCurrentMatch() { this.findState.matches.forEach(m => m.classList.remove('inkwell-find-active')); const cur = this.findState.matches[this.findState.currentIndex]; if (cur) { cur.classList.add('inkwell-find-active'); cur.scrollIntoView({ block: 'center', behavior: 'smooth' }); } },
+    findNext() { if (this.findState.matches.length === 0) return; this.findState.currentIndex = (this.findState.currentIndex + 1) % this.findState.matches.length; this.highlightCurrentMatch(); this.postMessage('findResults', { count: this.findState.matches.length, current: this.findState.currentIndex }); },
+    findPrevious() { if (this.findState.matches.length === 0) return; this.findState.currentIndex = (this.findState.currentIndex - 1 + this.findState.matches.length) % this.findState.matches.length; this.highlightCurrentMatch(); this.postMessage('findResults', { count: this.findState.matches.length, current: this.findState.currentIndex }); },
+    replaceCurrent(replacement) { if (this.findState.currentIndex < 0) return; const mark = this.findState.matches[this.findState.currentIndex]; if (!mark) return; const text = document.createTextNode(replacement); mark.parentNode.replaceChild(text, mark); this.findInDocument(this.findState.query, this.findState.caseSensitive); this.onContentChange(); },
+    replaceAll(replacement) { this.clearFindHighlights(); const flags = this.findState.caseSensitive ? 'g' : 'gi'; const regex = new RegExp(this.findState.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags); const walker = document.createTreeWalker(this.element, NodeFilter.SHOW_TEXT, null); const textNodes = []; let n; while (n = walker.nextNode()) textNodes.push(n); for (const tn of textNodes) { const orig = tn.textContent; const replaced = orig.replace(regex, replacement); if (replaced !== orig) tn.textContent = replaced; } this.findState.matches = []; this.findState.currentIndex = -1; this.postMessage('findResults', { count: 0, current: -1 }); this.onContentChange(); },
+    clearFindHighlights() { const marks = this.element.querySelectorAll('.inkwell-find-highlight'); marks.forEach(mark => { const text = document.createTextNode(mark.textContent); mark.parentNode.replaceChild(text, mark); }); this.element.normalize(); },
+    closeFindReplace() { this.clearFindHighlights(); this.findState.matches = []; this.findState.currentIndex = -1; },
+
+    // --- Bridge ---
+    postMessage(type, data) { try { if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.inkwell) { window.webkit.messageHandlers.inkwell.postMessage(JSON.stringify({ type: type, data: data })); } } catch (e) { console.error('Bridge error:', e); } }
+  };
+
+  // ----------------------------------------------------------
+  // Global API
+  // ----------------------------------------------------------
+  window.InkwellEditor = {
+    loadMarkdown: (md) => Editor.loadMarkdown(md),
+    getMarkdown: () => Editor.getMarkdown(),
+    applyTheme: (css) => Editor.applyTheme(css),
+    execFormat: (cmd) => Editor.execFormat(cmd),
+    focus: () => Editor.element.focus(),
+    scrollToHeading: (text, level) => {
+      const headings = Editor.element.querySelectorAll('h' + level);
+      for (const h of headings) {
+        if (h.textContent.trim() === text.trim()) {
+          h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const range = document.createRange();
+          range.selectNodeContents(h);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+      }
+    },
+    findInDocument: (q, cs) => Editor.findInDocument(q, cs),
+    findNext: () => Editor.findNext(),
+    findPrevious: () => Editor.findPrevious(),
+    replaceCurrent: (r) => Editor.replaceCurrent(r),
+    replaceAll: (r) => Editor.replaceAll(r),
+    closeFindReplace: () => Editor.closeFindReplace(),
+    applyLink: (url, text) => Editor.applyLink(url, text),
+    applyImage: (url, alt) => Editor.applyImage(url, alt),
+    insertTable: (r, c) => Editor.insertTable(r, c),
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => Editor.init());
+  else Editor.init();
+})();
+</script>
+</body>
+</html>
