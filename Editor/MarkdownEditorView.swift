@@ -1,6 +1,11 @@
 import SwiftUI
 import WebKit
 import Combine
+import UniformTypeIdentifiers
+#if os(iOS)
+import PhotosUI
+import UniformTypeIdentifiers
+#endif
 
 // MARK: - MarkdownEditorView (SwiftUI)
 
@@ -122,6 +127,9 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     private var pendingMarkdown: String?
     private var pendingTheme: String?
     private var documentBaseURL: URL?
+    #if os(iOS)
+    var _carouselModeForPicker: Bool = false
+    #endif
     
     init(
         markdownContent: Binding<String>,
@@ -232,16 +240,24 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         }
     }
     
-    func execFormat(_ command: String) {
-        webView.evaluateJavaScript("window.InkwellEditor.execFormat('\(command)');")
-    }
-    
     func focus() {
         webView.evaluateJavaScript("window.InkwellEditor.focus();")
     }
     
     // MARK: - Find & Replace — Swift → JS
     
+    func execFormat(_ format: String) {
+        // format 可能是 "bold"，也可能是 "textColor:#FF3B30" 或 "bgColor:" 这种带参数形式
+        let parts = format.split(separator: ":", maxSplits: 1).map(String.init)
+        let cmd   = parts[0]
+        let param = parts.count > 1 ? parts[1] : ""
+        let escapedCmd   = escapeForJS(cmd)
+        let escapedParam = escapeForJS(param)
+        webView.evaluateJavaScript(
+            "window.InkwellEditor.execFormat('\(escapedCmd)', '\(escapedParam)');"
+        )
+    }
+
     func findInDocument(_ query: String, caseSensitive: Bool) {
         let escaped = escapeForJS(query)
         webView.evaluateJavaScript("window.InkwellEditor.findInDocument(`\(escaped)`, \(caseSensitive));")
@@ -367,6 +383,13 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 self?.showLinkDialog(selectedText: selectedText)
             }
             
+        case "requestImageInput":
+            // JS is asking to pick an image file — open native file picker
+            let carouselMode = payload["carouselMode"] as? Bool ?? false
+            DispatchQueue.main.async { [weak self] in
+                self?.showImagePicker(carouselMode: carouselMode)
+            }
+            
         case "openLink":
             if let urlString = payload["url"] as? String, let url = URL(string: urlString) {
                 #if os(macOS)
@@ -381,6 +404,72 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         }
     }
     
+    // MARK: - Image Picker
+
+    private func showImagePicker(carouselMode: Bool) {
+        #if os(macOS)
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image]
+        panel.title = "Choose Image"
+
+        guard let window = webView.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self = self else { return }
+            self.sendImageURLToJS(url: url, carouselMode: carouselMode)
+        }
+        #else
+        // iOS: use UIDocumentPickerViewController for files, or PHPickerViewController for photos
+        // PHPickerViewController is preferred (no permission prompt needed for read-only access)
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        self._carouselModeForPicker = carouselMode
+
+        // Find the topmost view controller to present from
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let root = scene.windows.first?.rootViewController {
+            var top = root
+            while let presented = top.presentedViewController { top = presented }
+            top.present(picker, animated: true)
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    private func sendImageURLToJS(url: URL, carouselMode: Bool) {
+        // Copy image to document directory so it's accessible from the webview sandbox
+        let fileName = url.lastPathComponent
+        let dest: URL
+        if let baseDir = documentBaseURL {
+            dest = baseDir.appendingPathComponent(fileName)
+            if !FileManager.default.fileExists(atPath: dest.path) {
+                try? FileManager.default.copyItem(at: url, to: dest)
+            }
+        } else {
+            dest = url
+        }
+        let relativePath = dest.lastPathComponent
+        let js: String
+        if carouselMode {
+            let escaped = relativePath.replacingOccurrences(of: "\\", with: "\\\\")
+                                      .replacingOccurrences(of: "`", with: "\\`")
+            js = "window.InkwellEditor.carouselReceiveImage(`\(escaped)`);"
+        } else {
+            let escaped = relativePath.replacingOccurrences(of: "\\", with: "\\\\")
+                                      .replacingOccurrences(of: "`", with: "\\`")
+            js = "window.InkwellEditor.applyImage(`\(escaped)`, ``);"
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.webView.evaluateJavaScript(js)
+        }
+    }
+    #endif
+
     // MARK: - Link Dialog
     
     private func showLinkDialog(selectedText: String) {
@@ -463,3 +552,44 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     </script></body></html>
     """
 }
+
+// MARK: - iOS PHPickerViewControllerDelegate
+
+#if os(iOS)
+extension EditorCoordinator: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let result = results.first else { return }
+
+        result.itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { [weak self] url, error in
+            guard let self = self, let url = url else { return }
+
+            // Copy to document directory so webview sandbox can read it
+            let fileName = url.lastPathComponent
+            let dest: URL
+            if let baseDir = self.documentBaseURL {
+                dest = baseDir.appendingPathComponent(fileName)
+            } else {
+                dest = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+            }
+            try? FileManager.default.copyItem(at: url, to: dest)
+
+            let relativePath = dest.lastPathComponent
+            let escaped = relativePath
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+
+            let js: String
+            if self._carouselModeForPicker {
+                js = "window.InkwellEditor.carouselReceiveImage(`\(escaped)`);"
+            } else {
+                js = "window.InkwellEditor.applyImage(`\(escaped)`, ``);"
+            }
+
+            DispatchQueue.main.async {
+                self.webView.evaluateJavaScript(js)
+            }
+        }
+    }
+}
+#endif

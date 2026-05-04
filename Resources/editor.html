@@ -156,12 +156,207 @@
     .inkwell-table-toolbar button { color: #ddd; }
     .inkwell-table-toolbar button:hover { background: #444; }
   }
+
+  /* ========== Image Carousel ========== */
+  .inkwell-carousel {
+    position: relative;
+    width: 100%;
+    margin: 1.2em 0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #000;
+    user-select: none;
+    /* Reveal arrow zones on hover */
+  }
+  .inkwell-carousel-track {
+    display: flex;
+    transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+  .inkwell-carousel-slide {
+    flex: 0 0 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .inkwell-carousel-slide img {
+    width: 100%;
+    height: 100%;
+    max-height: 520px;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+    vertical-align: bottom;
+  }
+
+  /* ---- Arrow hit zones (invisible, left/right 20% strips) ---- */
+  .inkwell-carousel-arrow {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 20%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    z-index: 10;
+    padding: 0;
+    display: flex;
+    align-items: center;
+  }
+  .inkwell-carousel-arrow.prev { left: 0; justify-content: flex-start; }
+  .inkwell-carousel-arrow.next { right: 0; justify-content: flex-end; }
+  .inkwell-carousel-arrow:disabled { cursor: default; pointer-events: none; }
+
+  /* ---- Arrow icon pill ---- */
+  .inkwell-carousel-arrow-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.28);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.82);
+    transition: opacity 0.22s ease, transform 0.22s ease, background 0.18s ease;
+    color: #fff;
+    font-size: 17px;
+    font-weight: 300;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.22);
+    flex-shrink: 0;
+  }
+  .inkwell-carousel-arrow.prev .inkwell-carousel-arrow-icon { margin-left: 12px; }
+  .inkwell-carousel-arrow.next .inkwell-carousel-arrow-icon { margin-right: 12px; }
+
+  /* Show icon when hovering the hit zone */
+  .inkwell-carousel-arrow:not(:disabled):hover .inkwell-carousel-arrow-icon {
+    opacity: 1;
+    transform: scale(1);
+    background: rgba(255,255,255,0.28);
+  }
+
+  /* Dot indicators */
+  .inkwell-carousel-dots {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 5px;
+    z-index: 10;
+    padding: 4px 8px;
+    background: rgba(0,0,0,0.28);
+    border-radius: 20px;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+  .inkwell-carousel-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.45);
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.22s, transform 0.22s, width 0.22s;
+  }
+  .inkwell-carousel-dot.active {
+    background: #fff;
+    width: 18px;
+    border-radius: 3px;
+  }
+  /* Counter badge */
+  .inkwell-carousel-counter {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    font-size: 11px;
+    font-family: -apple-system, sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    color: rgba(255,255,255,0.9);
+    background: rgba(0,0,0,0.32);
+    padding: 3px 9px;
+    border-radius: 20px;
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    .inkwell-carousel { background: #111; }
+  }
+
+  /* ========== Carousel Insert Dialog ========== */
+  .inkwell-dialog-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  }
+  .inkwell-dialog {
+    background: #fff; border-radius: 12px; box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+    width: 520px; max-width: 92vw; max-height: 80vh;
+    display: flex; flex-direction: column; font-family: -apple-system, sans-serif; overflow: hidden;
+  }
+  .inkwell-dialog-header { padding: 16px 20px 12px; border-bottom: 1px solid #e8e8e8; display: flex; align-items: center; justify-content: space-between; }
+  .inkwell-dialog-title { font-size: 15px; font-weight: 600; color: #1a1a1a; }
+  .inkwell-dialog-close { background: none; border: none; cursor: pointer; font-size: 18px; color: #888; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+  .inkwell-dialog-close:hover { background: #f0f0f0; color: #333; }
+  .inkwell-dialog-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .inkwell-img-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .inkwell-img-item { display: flex; align-items: center; gap: 10px; background: #f7f7f7; border: 1px solid #e4e4e4; border-radius: 8px; padding: 8px 10px; }
+  .inkwell-img-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 5px; flex-shrink: 0; }
+  .inkwell-img-thumb-placeholder { width: 48px; height: 48px; border-radius: 5px; flex-shrink: 0; background: #e0e0e0; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .inkwell-img-info { flex: 1; min-width: 0; }
+  .inkwell-img-url { font-size: 11px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+  .inkwell-img-alt-input { width: 100%; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; padding: 3px 7px; color: #333; background: #fff; box-sizing: border-box; }
+  .inkwell-img-alt-input:focus { outline: none; border-color: #0066cc; }
+  .inkwell-img-actions { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+  .inkwell-img-btn { background: none; border: none; cursor: pointer; font-size: 14px; padding: 2px 5px; border-radius: 3px; color: #666; line-height: 1; }
+  .inkwell-img-btn:hover { background: #e8e8e8; color: #333; }
+  .inkwell-img-btn.remove:hover { background: #ffe0e0; color: #c00; }
+  .inkwell-add-controls { display: flex; gap: 8px; margin-bottom: 10px; }
+  .inkwell-add-btn { flex: 1; padding: 8px 12px; border-radius: 7px; border: 1.5px dashed #bbb; background: #fafafa; cursor: pointer; font-size: 13px; color: #555; display: flex; align-items: center; justify-content: center; gap: 6px; transition: border-color 0.15s, background 0.15s; }
+  .inkwell-add-btn:hover { border-color: #0066cc; background: #f0f5ff; color: #0055bb; }
+  .inkwell-url-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .inkwell-url-input { flex: 1; font-size: 13px; border: 1px solid #ddd; border-radius: 6px; padding: 6px 10px; color: #333; background: #fff; }
+  .inkwell-url-input:focus { outline: none; border-color: #0066cc; }
+  .inkwell-url-add { padding: 6px 14px; background: #0066cc; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+  .inkwell-url-add:hover { background: #0055aa; }
+  .inkwell-dialog-footer { padding: 12px 20px; border-top: 1px solid #e8e8e8; display: flex; justify-content: flex-end; gap: 8px; }
+  .inkwell-dialog-cancel { padding: 7px 18px; border-radius: 7px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 13px; color: #333; }
+  .inkwell-dialog-cancel:hover { background: #f5f5f5; }
+  .inkwell-dialog-insert { padding: 7px 18px; border-radius: 7px; border: none; background: #0066cc; color: #fff; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .inkwell-dialog-insert:hover { background: #0055aa; }
+  .inkwell-dialog-insert:disabled { background: #aaa; cursor: default; }
+  .inkwell-img-empty { text-align: center; color: #aaa; font-size: 13px; padding: 20px 0 10px; }
+  @media (prefers-color-scheme: dark) {
+    .inkwell-dialog { background: #242424; }
+    .inkwell-dialog-header, .inkwell-dialog-footer { border-color: #3a3a3a; }
+    .inkwell-dialog-title { color: #eee; }
+    .inkwell-dialog-close:hover { background: #333; color: #ccc; }
+    .inkwell-img-item { background: #2e2e2e; border-color: #3e3e3e; }
+    .inkwell-img-url { color: #888; }
+    .inkwell-img-alt-input { background: #1e1e1e; border-color: #444; color: #ddd; }
+    .inkwell-img-btn:hover { background: #3a3a3a; color: #ccc; }
+    .inkwell-img-btn.remove:hover { background: #4a1a1a; color: #f88; }
+    .inkwell-add-btn { background: #2a2a2a; border-color: #444; color: #aaa; }
+    .inkwell-add-btn:hover { border-color: #4488dd; background: #1e2a3a; color: #88bbff; }
+    .inkwell-url-input { background: #1e1e1e; border-color: #444; color: #ddd; }
+    .inkwell-dialog-cancel { background: #2e2e2e; border-color: #444; color: #ccc; }
+    .inkwell-dialog-cancel:hover { background: #383838; }
+    .inkwell-img-empty { color: #666; }
+  }
 </style>
 </head>
 <body>
 <div class="editor-container">
   <div id="editor" contenteditable="true"></div>
 </div>
+<div id="inkwell-carousel-dialog" style="display:none"></div>
 
 <script>
 (function() {
@@ -306,7 +501,40 @@
         // Empty line
         if (line.trim() === '') { i++; continue; }
 
-        // Paragraph
+        // Image-only line — collect consecutive image lines → carousel or single img
+        const imgLineMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+        if (imgLineMatch) {
+          const images = [];
+          while (i < lines.length && lines[i].match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/)) {
+            const m = lines[i].match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+            images.push({ alt: m[1], src: m[2] });
+            i++;
+          }
+          if (images.length === 1) {
+            html += '<p><img src="' + images[0].src + '" alt="' + images[0].alt + '"></p>\n';
+          } else {
+            // Build carousel
+            const slides = images.map((img, idx) =>
+              '<div class="inkwell-carousel-slide" data-index="' + idx + '">' +
+              '<img src="' + img.src + '" alt="' + this.escapeHtml(img.alt) + '">' +
+              '</div>'
+            ).join('');
+            const dots = images.map((_, idx) =>
+              '<button class="inkwell-carousel-dot' + (idx === 0 ? ' active' : '') + '" data-dot="' + idx + '" aria-label="Slide ' + (idx+1) + '"></button>'
+            ).join('');
+            const md = images.map(img => '![' + img.alt + '](' + img.src + ')').join('\n');
+            html +=
+              '<div class="inkwell-carousel" contenteditable="false" data-carousel data-count="' + images.length + '" data-current="0" data-md="' + this.escapeAttr(md) + '">' +
+                '<div class="inkwell-carousel-track">' + slides + '</div>' +
+                '<button class="inkwell-carousel-arrow prev" aria-label="Previous"><span class="inkwell-carousel-arrow-icon">&#8249;</span></button>' +
+                '<button class="inkwell-carousel-arrow next" aria-label="Next"><span class="inkwell-carousel-arrow-icon">&#8250;</span></button>' +
+                '<div class="inkwell-carousel-dots">' + dots + '</div>' +
+                '<div class="inkwell-carousel-counter">1 / ' + images.length + '</div>' +
+              '</div>\n';
+          }
+          continue;
+        }
+
         html += '<p>' + this.parseInline(line) + '</p>\n';
         i++;
       }
@@ -335,6 +563,10 @@
     escapeHtml(text) {
       const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
       return text.replace(/[&<>"']/g, c => map[c]);
+    },
+
+    escapeAttr(text) {
+      return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
     }
   };
 
@@ -397,8 +629,23 @@
         case 'br': return '\n';
         case 'table': return this.serializeTable(node) + '\n\n';
         case 'input': return '';
-        case 'span': return inner;
-        case 'div': return inner + '\n';
+        case 'span': {
+          const color   = node.style.color;
+          const bgColor = node.style.backgroundColor;
+          if (color)   return `<span style="color:${color}">${inner}</span>`;
+          if (bgColor) return `<span style="background-color:${bgColor}">${inner}</span>`;
+          return inner;
+        }
+        case 'div':
+          // Carousel → restore individual image lines
+          if (node.hasAttribute('data-carousel')) {
+            const md = node.getAttribute('data-md');
+            if (md) return md.replace(/&#10;/g, '\n') + '\n\n';
+            // Fallback: extract from slides
+            const imgs = Array.from(node.querySelectorAll('.inkwell-carousel-slide img'));
+            return imgs.map(img => '![' + (img.getAttribute('alt') || '') + '](' + (img.getAttribute('src') || '') + ')').join('\n') + '\n\n';
+          }
+          return inner + '\n';
         default: return inner;
       }
     },
@@ -824,8 +1071,312 @@
   };
 
   // ----------------------------------------------------------
-  // Table Manager: Enhanced table editing & data display
+  // Carousel Manager: image carousel interaction
   // ----------------------------------------------------------
+  const CarouselManager = {
+    init(editor) {
+      // Use event delegation on the editor element
+      editor.element.addEventListener('click', (e) => this.onClick(e));
+      editor.element.addEventListener('keydown', (e) => this.onKeyDown(e));
+    },
+
+    onClick(e) {
+      // Arrow buttons
+      const arrow = e.target.closest('.inkwell-carousel-arrow');
+      if (arrow) {
+        e.preventDefault();
+        const carousel = arrow.closest('.inkwell-carousel');
+        if (!carousel) return;
+        const delta = arrow.classList.contains('prev') ? -1 : 1;
+        this.go(carousel, delta);
+        return;
+      }
+      // Dot buttons
+      const dot = e.target.closest('.inkwell-carousel-dot');
+      if (dot) {
+        e.preventDefault();
+        const carousel = dot.closest('.inkwell-carousel');
+        if (!carousel) return;
+        const idx = parseInt(dot.getAttribute('data-dot'));
+        this.goTo(carousel, idx);
+        return;
+      }
+    },
+
+    onKeyDown(e) {
+      // Allow left/right arrow keys when a carousel is focused
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      let node = sel.getRangeAt(0).startContainer;
+      while (node) {
+        if (node.classList && node.classList.contains('inkwell-carousel')) {
+          e.preventDefault();
+          this.go(node, e.key === 'ArrowLeft' ? -1 : 1);
+          return;
+        }
+        node = node.parentNode;
+      }
+    },
+
+    go(carousel, delta) {
+      const count = parseInt(carousel.getAttribute('data-count'));
+      const current = parseInt(carousel.getAttribute('data-current'));
+      const next = Math.max(0, Math.min(count - 1, current + delta));
+      this.goTo(carousel, next);
+    },
+
+    goTo(carousel, idx) {
+      const count = parseInt(carousel.getAttribute('data-count'));
+      idx = Math.max(0, Math.min(count - 1, idx));
+      carousel.setAttribute('data-current', idx);
+
+      // Move track
+      const track = carousel.querySelector('.inkwell-carousel-track');
+      if (track) track.style.transform = 'translateX(-' + (idx * 100) + '%)';
+
+      // Update dots
+      carousel.querySelectorAll('.inkwell-carousel-dot').forEach((dot, i) => {
+        dot.classList.toggle('active', i === idx);
+      });
+
+      // Update counter
+      const counter = carousel.querySelector('.inkwell-carousel-counter');
+      if (counter) counter.textContent = (idx + 1) + ' / ' + count;
+
+      // Update arrow disabled state
+      const prev = carousel.querySelector('.inkwell-carousel-arrow.prev');
+      const next = carousel.querySelector('.inkwell-carousel-arrow.next');
+      if (prev) prev.disabled = idx === 0;
+      if (next) next.disabled = idx === count - 1;
+    },
+
+    // Called after loadMarkdown to initialize all carousels
+    initAll(container) {
+      container.querySelectorAll('[data-carousel]').forEach(carousel => {
+        this.goTo(carousel, 0);
+      });
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Carousel Dialog: insert-carousel popup UI
+  // ----------------------------------------------------------
+  const CarouselDialog = {
+    images: [],
+    _pendingLocal: false,
+    _insertAfterNode: null,
+
+    open(editor) {
+      this.images = [];
+      this._pendingLocal = false;
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        let node = sel.getRangeAt(0).startContainer;
+        if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+        while (node && node.parentNode !== editor.element) node = node.parentNode;
+        this._insertAfterNode = node || null;
+      } else {
+        this._insertAfterNode = null;
+      }
+      this._render();
+    },
+
+    receiveLocalImage(src) {
+      if (!this._pendingLocal) return;
+      this._pendingLocal = false;
+      this.images.push({ src, alt: '' });
+      this._render();
+    },
+
+    _render() {
+      const overlay = document.getElementById('inkwell-carousel-dialog');
+      overlay.style.display = 'flex';
+      overlay.className = 'inkwell-dialog-overlay';
+      const imgs = this.images;
+      const listHtml = imgs.length === 0
+        ? '<div class="inkwell-img-empty">No images yet — add some below.</div>'
+        : imgs.map((img, i) => `
+          <div class="inkwell-img-item" data-idx="${i}">
+            <img class="inkwell-img-thumb" src="${this._esc(img.src)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" alt="">
+            <div class="inkwell-img-thumb-placeholder" style="display:none">🖼</div>
+            <div class="inkwell-img-info">
+              <div class="inkwell-img-url" title="${this._esc(img.src)}">${this._esc(this._shortUrl(img.src))}</div>
+              <input class="inkwell-img-alt-input" type="text" placeholder="Alt text (optional)" value="${this._esc(img.alt)}" data-alt-idx="${i}">
+            </div>
+            <div class="inkwell-img-actions">
+              ${i > 0 ? `<button class="inkwell-img-btn" data-move-up="${i}">↑</button>` : '<span style="width:24px"></span>'}
+              ${i < imgs.length - 1 ? `<button class="inkwell-img-btn" data-move-down="${i}">↓</button>` : '<span style="width:24px"></span>'}
+              <button class="inkwell-img-btn remove" data-remove="${i}">✕</button>
+            </div>
+          </div>`).join('');
+
+      overlay.innerHTML = `
+        <div class="inkwell-dialog">
+          <div class="inkwell-dialog-header">
+            <span class="inkwell-dialog-title">🖼 Insert Image Carousel</span>
+            <button class="inkwell-dialog-close" id="ikw-dlg-close">×</button>
+          </div>
+          <div class="inkwell-dialog-body">
+            <div class="inkwell-img-list">${listHtml}</div>
+            <div class="inkwell-add-controls">
+              <button class="inkwell-add-btn" id="ikw-add-local">📁 Add Local Image</button>
+              <button class="inkwell-add-btn" id="ikw-show-url">🔗 Add by URL</button>
+            </div>
+            <div id="ikw-url-row" class="inkwell-url-row" style="display:none">
+              <input class="inkwell-url-input" id="ikw-url-input" type="url" placeholder="https://example.com/image.jpg">
+              <button class="inkwell-url-add" id="ikw-url-confirm">Add</button>
+            </div>
+          </div>
+          <div class="inkwell-dialog-footer">
+            <button class="inkwell-dialog-cancel" id="ikw-dlg-cancel">Cancel</button>
+            <button class="inkwell-dialog-insert" id="ikw-dlg-insert" ${imgs.length < 1 ? 'disabled' : ''}>
+              ${imgs.length < 2 ? 'Insert Image' : 'Insert Carousel (' + imgs.length + ' images)'}
+            </button>
+          </div>
+        </div>`;
+
+      this._bindEvents(overlay);
+    },
+
+    _bindEvents(overlay) {
+      overlay.querySelector('#ikw-dlg-close').onclick = () => this.close();
+      overlay.querySelector('#ikw-dlg-cancel').onclick = () => this.close();
+      overlay.onclick = (e) => { if (e.target === overlay) this.close(); };
+
+      overlay.querySelector('#ikw-add-local').onclick = () => {
+        this._pendingLocal = true;
+        try {
+          window.webkit.messageHandlers.inkwell.postMessage(
+            JSON.stringify({ type: 'requestImageInput', data: { carouselMode: true } })
+          );
+        } catch(e) { this._pendingLocal = false; }
+      };
+
+      const urlRow = overlay.querySelector('#ikw-url-row');
+      overlay.querySelector('#ikw-show-url').onclick = () => {
+        urlRow.style.display = urlRow.style.display === 'none' ? 'flex' : 'none';
+        if (urlRow.style.display === 'flex') overlay.querySelector('#ikw-url-input').focus();
+      };
+
+      const urlInput = overlay.querySelector('#ikw-url-input');
+      const doAddUrl = () => {
+        const val = urlInput.value.trim();
+        if (!val) return;
+        this.images.push({ src: val, alt: '' });
+        urlInput.value = '';
+        this._render();
+      };
+      overlay.querySelector('#ikw-url-confirm').onclick = doAddUrl;
+      urlInput.onkeydown = (e) => { if (e.key === 'Enter') doAddUrl(); };
+
+      overlay.querySelectorAll('[data-alt-idx]').forEach(inp => {
+        inp.oninput = () => { this.images[parseInt(inp.getAttribute('data-alt-idx'))].alt = inp.value; };
+      });
+      overlay.querySelectorAll('[data-move-up]').forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.getAttribute('data-move-up'));
+          [this.images[i-1], this.images[i]] = [this.images[i], this.images[i-1]];
+          this._render();
+        };
+      });
+      overlay.querySelectorAll('[data-move-down]').forEach(btn => {
+        btn.onclick = () => {
+          const i = parseInt(btn.getAttribute('data-move-down'));
+          [this.images[i], this.images[i+1]] = [this.images[i+1], this.images[i]];
+          this._render();
+        };
+      });
+      overlay.querySelectorAll('[data-remove]').forEach(btn => {
+        btn.onclick = () => { this.images.splice(parseInt(btn.getAttribute('data-remove')), 1); this._render(); };
+      });
+
+      const insertBtn = overlay.querySelector('#ikw-dlg-insert');
+      if (insertBtn && !insertBtn.disabled) insertBtn.onclick = () => this._doInsert();
+    },
+
+    _doInsert() {
+      if (this.images.length < 1) return;
+      this.close();
+
+      const editor = document.getElementById('editor');
+
+      if (this.images.length === 1) {
+        const img = document.createElement('img');
+        img.src = this.images[0].src; img.alt = this.images[0].alt;
+        const sel = window.getSelection();
+        if (sel.rangeCount) { const r = sel.getRangeAt(0); r.deleteContents(); r.insertNode(img); r.setStartAfter(img); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+        else editor.appendChild(img);
+        const event = new Event('input', { bubbles: true }); editor.dispatchEvent(event);
+        return;
+      }
+
+      // Build carousel
+      const carousel = document.createElement('div');
+      carousel.className = 'inkwell-carousel';
+      carousel.setAttribute('contenteditable', 'false');
+      carousel.setAttribute('data-carousel', '');
+      carousel.setAttribute('data-count', this.images.length);
+      carousel.setAttribute('data-current', '0');
+      carousel.setAttribute('data-md', this.images.map(img => '![' + img.alt + '](' + img.src + ')').join('\n'));
+
+      const track = document.createElement('div'); track.className = 'inkwell-carousel-track';
+      this.images.forEach((img, idx) => {
+        const slide = document.createElement('div');
+        slide.className = 'inkwell-carousel-slide'; slide.setAttribute('data-index', idx);
+        const im = document.createElement('img'); im.src = img.src; im.alt = img.alt;
+        slide.appendChild(im); track.appendChild(slide);
+      });
+      carousel.appendChild(track);
+
+      const prevBtn = document.createElement('button');
+      prevBtn.className = 'inkwell-carousel-arrow prev'; prevBtn.setAttribute('aria-label', 'Previous');
+      prevBtn.innerHTML = '<span class="inkwell-carousel-arrow-icon">&#8249;</span>';
+      carousel.appendChild(prevBtn);
+
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'inkwell-carousel-arrow next'; nextBtn.setAttribute('aria-label', 'Next');
+      nextBtn.innerHTML = '<span class="inkwell-carousel-arrow-icon">&#8250;</span>';
+      carousel.appendChild(nextBtn);
+
+      const dots = document.createElement('div'); dots.className = 'inkwell-carousel-dots';
+      this.images.forEach((_, idx) => {
+        const dot = document.createElement('button');
+        dot.className = 'inkwell-carousel-dot' + (idx === 0 ? ' active' : '');
+        dot.setAttribute('data-dot', idx); dot.setAttribute('aria-label', 'Slide ' + (idx+1));
+        dots.appendChild(dot);
+      });
+      carousel.appendChild(dots);
+
+      const counter = document.createElement('div');
+      counter.className = 'inkwell-carousel-counter'; counter.textContent = '1 / ' + this.images.length;
+      carousel.appendChild(counter);
+
+      CarouselManager.goTo(carousel, 0);
+
+      if (this._insertAfterNode && this._insertAfterNode.parentNode === editor) {
+        this._insertAfterNode.parentNode.insertBefore(carousel, this._insertAfterNode.nextSibling);
+      } else {
+        editor.appendChild(carousel);
+      }
+      const p = document.createElement('p'); p.innerHTML = '<br>';
+      carousel.parentNode.insertBefore(p, carousel.nextSibling);
+      const range = document.createRange(); range.setStart(p, 0); range.collapse(true);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+
+      const event = new Event('input', { bubbles: true }); editor.dispatchEvent(event);
+    },
+
+    close() {
+      const overlay = document.getElementById('inkwell-carousel-dialog');
+      overlay.style.display = 'none';
+      overlay.innerHTML = '';
+      this._pendingLocal = false;
+    },
+
+    _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); },
+    _shortUrl(s) { try { return decodeURIComponent(s).split('/').pop() || s; } catch(e) { return s; } }
+  };
   const TableManager = {
     editor: null,
     activeTable: null,
@@ -1247,6 +1798,9 @@
       // Initialize table manager
       TableManager.init(this);
 
+      // Initialize carousel manager
+      CarouselManager.init(this);
+
       this.element.addEventListener('input', (e) => {
         this.onContentChange();
         // Run live conversion after content change is reported
@@ -1292,6 +1846,8 @@
       this.highlightCodeBlocks();
       // Set up table resize handles
       this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
+      // Initialize carousels
+      CarouselManager.initAll(this.element);
     },
 
     // --- Syntax Highlighting ---
@@ -1421,7 +1977,7 @@
 
     // --- Format Commands ---
 
-    execFormat(command) {
+    execFormat(command, param) {
       const sel = window.getSelection();
       if (!sel.rangeCount && command !== 'horizontalRule') return;
 
@@ -1443,12 +1999,68 @@
         case 'horizontalRule': document.execCommand('insertHorizontalRule'); break;
         case 'link':          this.insertLink(); break;
         case 'image':         this.insertImage(); break;
+        case 'carousel':      CarouselDialog.open(this); break;
         case 'table':         this.insertTable(3, 3); break;
         case 'increaseIndent': document.execCommand('indent'); break;
         case 'decreaseIndent': document.execCommand('outdent'); break;
+        case 'textColor':
+          if (!param) this.removeInlineStyle('color');
+          else this.applyInlineStyle('color', param);
+          break;
+        case 'bgColor':
+          if (!param) this.removeInlineStyle('backgroundColor');
+          else this.applyInlineStyle('backgroundColor', param);
+          break;
       }
       this.onContentChange();
       this.updateSelectionState();
+    },
+
+    // Apply an inline CSS style (color / backgroundColor) to the current selection
+    applyInlineStyle(prop, value) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+      const range = sel.getRangeAt(0);
+      this.removeInlineStyleInRange(range.commonAncestorContainer, prop);
+      const span = document.createElement('span');
+      span.style[prop] = value;
+      try {
+        range.surroundContents(span);
+      } catch (e) {
+        const frag = range.extractContents();
+        span.appendChild(frag);
+        range.insertNode(span);
+      }
+      const newRange = document.createRange();
+      newRange.selectNodeContents(span);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    },
+
+    removeInlineStyle(prop) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+      const range = sel.getRangeAt(0);
+      this.removeInlineStyleInRange(range.commonAncestorContainer, prop);
+    },
+
+    removeInlineStyleInRange(container, prop) {
+      const root = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+      Array.from(root.querySelectorAll('span')).forEach(span => {
+        if (span.style[prop]) {
+          span.style[prop] = '';
+          const style = span.getAttribute('style');
+          if (!style || style.trim() === '') {
+            const parent = span.parentNode;
+            while (span.firstChild) parent.insertBefore(span.firstChild, span);
+            parent.removeChild(span);
+          }
+        }
+      });
+      // Also check the root span itself
+      if (root.tagName === 'SPAN' && root.style[prop]) {
+        root.style[prop] = '';
+      }
     },
 
     wrapBlock(tag) {
@@ -1561,6 +2173,7 @@
     insertImage() { this.postMessage('requestImageInput', {}); },
 
     applyImage(url, alt) {
+      if (CarouselDialog._pendingLocal) { CarouselDialog.receiveLocalImage(url); return; }
       const img = document.createElement('img'); img.src = url; img.alt = alt || '';
       const sel = window.getSelection();
       if (sel.rangeCount) { const range = sel.getRangeAt(0); range.deleteContents(); range.insertNode(img); range.setStartAfter(img); range.collapse(true); sel.removeAllRanges(); sel.addRange(range); }
@@ -1639,11 +2252,19 @@
         }
         node = node.parentNode;
       }
+      // Detect text color and background color at cursor
+      let colorNode = sel.getRangeAt(0).startContainer;
+      if (colorNode.nodeType === Node.TEXT_NODE) colorNode = colorNode.parentNode;
+      while (colorNode && colorNode !== this.element) {
+        if (colorNode.style) {
+          if (colorNode.style.color && !formats.textColor)         formats.textColor = colorNode.style.color;
+          if (colorNode.style.backgroundColor && !formats.bgColor) formats.bgColor   = colorNode.style.backgroundColor;
+        }
+        colorNode = colorNode.parentNode;
+      }
+
       this.postMessage('selectionChange', formats);
     },
-
-    // ============================================================
-    // Find & Replace
     // ============================================================
     findState: { query: '', caseSensitive: false, matches: [], currentIndex: -1 },
 
@@ -1683,7 +2304,7 @@
     loadMarkdown: (md) => Editor.loadMarkdown(md),
     getMarkdown: () => Editor.getMarkdown(),
     applyTheme: (css) => Editor.applyTheme(css),
-    execFormat: (cmd) => Editor.execFormat(cmd),
+    execFormat: (cmd, param) => Editor.execFormat(cmd, param),
     focus: () => Editor.element.focus(),
     scrollToHeading: (text, level) => {
       const headings = Editor.element.querySelectorAll('h' + level);
@@ -1708,6 +2329,7 @@
     closeFindReplace: () => Editor.closeFindReplace(),
     applyLink: (url, text) => Editor.applyLink(url, text),
     applyImage: (url, alt) => Editor.applyImage(url, alt),
+    carouselReceiveImage: (url) => CarouselDialog.receiveLocalImage(url),
     insertTable: (r, c) => Editor.insertTable(r, c),
   };
 

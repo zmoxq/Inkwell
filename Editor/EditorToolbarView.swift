@@ -16,7 +16,12 @@ class EditorFormatState: ObservableObject {
     @Published var isLink = false
     @Published var blockType = "paragraph"
     @Published var headingLevel = 0
-    
+    // Color state
+    @Published var textColor: Color = .primary
+    @Published var bgColor: Color = .clear
+    @Published var hasTextColor: Bool = false
+    @Published var hasBgColor: Bool = false
+
     func update(from dict: [String: Any]) {
         isBold = dict["bold"] as? Bool ?? false
         isItalic = dict["italic"] as? Bool ?? false
@@ -25,6 +30,23 @@ class EditorFormatState: ObservableObject {
         isLink = dict["isLink"] as? Bool ?? false
         blockType = dict["blockType"] as? String ?? "paragraph"
         headingLevel = dict["headingLevel"] as? Int ?? 0
+
+        // Text color
+        if let colorStr = dict["textColor"] as? String, !colorStr.isEmpty,
+           let c = Color(cssString: colorStr) {
+            textColor = c
+            hasTextColor = true
+        } else {
+            hasTextColor = false
+        }
+        // Background color
+        if let bgStr = dict["bgColor"] as? String, !bgStr.isEmpty,
+           let c = Color(cssString: bgStr) {
+            bgColor = c
+            hasBgColor = true
+        } else {
+            hasBgColor = false
+        }
     }
 }
 
@@ -46,15 +68,15 @@ struct EditorToolbarView: View {
     @ObservedObject var formatState: EditorFormatState
     var onFormat: (String) -> Void
     var onFindReplace: () -> Void
-    
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
                 // Block type picker
                 blockTypePicker
-                
+
                 toolbarDivider
-                
+
                 // Inline formatting
                 FormatBtn(icon: "bold", tip: "Bold (⌘B)", active: formatState.isBold) {
                     onFormat("bold")
@@ -68,9 +90,36 @@ struct EditorToolbarView: View {
                 FormatBtn(icon: "chevron.left.forwardslash.chevron.right", tip: "Code (⌘E)", active: formatState.isInlineCode) {
                     onFormat("inlineCode")
                 }
-                
+
                 toolbarDivider
-                
+
+                // Color pickers
+                ColorPickerBtn(
+                    icon: "textformat",
+                    indicatorColor: formatState.hasTextColor ? formatState.textColor : Color.primary.opacity(0.25),
+                    tooltip: "字体颜色",
+                    onColorPicked: { color in
+                        if let hex = color.hexString {
+                            onFormat("textColor:\(hex)")
+                        }
+                    },
+                    onClear: { onFormat("textColor:") }
+                )
+
+                ColorPickerBtn(
+                    icon: "highlighter",
+                    indicatorColor: formatState.hasBgColor ? formatState.bgColor : Color.primary.opacity(0.25),
+                    tooltip: "背景色",
+                    onColorPicked: { color in
+                        if let hex = color.hexString {
+                            onFormat("bgColor:\(hex)")
+                        }
+                    },
+                    onClear: { onFormat("bgColor:") }
+                )
+
+                toolbarDivider
+
                 // Lists
                 FormatBtn(icon: "list.bullet", tip: "Bullet List (⌘⇧8)", active: formatState.blockType == "bulletList") {
                     onFormat("bulletList")
@@ -81,9 +130,9 @@ struct EditorToolbarView: View {
                 FormatBtn(icon: "checklist", tip: "Task List (⌘⇧X)", active: formatState.blockType == "taskList") {
                     onFormat("taskList")
                 }
-                
+
                 toolbarDivider
-                
+
                 // Block elements
                 FormatBtn(icon: "text.quote", tip: "Quote (⌘⇧')", active: formatState.blockType == "blockquote") {
                     onFormat("blockquote")
@@ -94,9 +143,9 @@ struct EditorToolbarView: View {
                 FormatBtn(icon: "minus", tip: "Horizontal Rule", active: false) {
                     onFormat("horizontalRule")
                 }
-                
+
                 toolbarDivider
-                
+
                 // Insert
                 FormatBtn(icon: "link", tip: "Link (⌘K)", active: formatState.isLink) {
                     onFormat("link")
@@ -104,9 +153,12 @@ struct EditorToolbarView: View {
                 FormatBtn(icon: "tablecells", tip: "Insert Table", active: false) {
                     onFormat("table")
                 }
-                
+                FormatBtn(icon: "rectangle.on.rectangle", tip: "Insert Image Carousel", active: false) {
+                    onFormat("carousel")
+                }
+
                 toolbarDivider
-                
+
                 // Indent
                 FormatBtn(icon: "increase.indent", tip: "Indent", active: false) {
                     onFormat("increaseIndent")
@@ -114,9 +166,9 @@ struct EditorToolbarView: View {
                 FormatBtn(icon: "decrease.indent", tip: "Outdent", active: false) {
                     onFormat("decreaseIndent")
                 }
-                
+
                 Spacer()
-                
+
                 // Find & Replace
                 FormatBtn(icon: "magnifyingglass", tip: "Find (⌘F)", active: false) {
                     onFindReplace()
@@ -132,9 +184,9 @@ struct EditorToolbarView: View {
         #endif
         .overlay(alignment: .bottom) { Divider() }
     }
-    
+
     // MARK: - Block Type Picker
-    
+
     private var blockTypePicker: some View {
         Menu {
             Button("Paragraph") { onFormat("paragraph") }
@@ -158,7 +210,7 @@ struct EditorToolbarView: View {
         }
         .buttonStyle(.plain)
     }
-    
+
     private var blockTypeLabel: String {
         switch formatState.blockType {
         case "h1": return "Heading 1"
@@ -175,9 +227,67 @@ struct EditorToolbarView: View {
         default: return "Paragraph"
         }
     }
-    
+
     private var toolbarDivider: some View {
         Divider().frame(height: 16).padding(.horizontal, 4)
+    }
+}
+
+// MARK: - Color Picker Button
+
+/// 带颜色指示条的颜色选择器按钮。
+/// 点击弹出系统取色器；右键菜单可清除颜色。
+struct ColorPickerBtn: View {
+    let icon: String
+    let indicatorColor: Color
+    let tooltip: String
+    var onColorPicked: (Color) -> Void
+    var onClear: () -> Void
+
+    @State private var pickerColor: Color = .red
+    @State private var showPicker = false
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            // 图标按钮
+            Button {
+                showPicker = true
+            } label: {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 24, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help(tooltip)
+            .contextMenu {
+                Button(role: .destructive) {
+                    onClear()
+                } label: {
+                    Label("清除\(tooltip)", systemImage: "xmark.circle")
+                }
+            }
+
+            // 颜色指示条（底部细线）
+            RoundedRectangle(cornerRadius: 1)
+                .fill(indicatorColor)
+                .frame(width: 18, height: 2.5)
+                .offset(y: 2)
+        }
+        .frame(width: 28, height: 28)
+        // 透明的 ColorPicker overlay，只在 showPicker 时激活
+        .background(
+            Group {
+                if showPicker {
+                    ColorPicker("", selection: $pickerColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .opacity(0.011)
+                        .onChange(of: pickerColor) { _, newColor in
+                            onColorPicked(newColor)
+                            showPicker = false
+                        }
+                }
+            }
+        )
     }
 }
 
@@ -188,9 +298,9 @@ struct FormatBtn: View {
     let tip: String
     let active: Bool
     let action: () -> Void
-    
+
     @State private var hovering = false
-    
+
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
@@ -219,7 +329,7 @@ struct FindReplaceBar: View {
     var onReplace: (String) -> Void
     var onReplaceAll: (String) -> Void
     var onClose: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Find row
@@ -227,7 +337,7 @@ struct FindReplaceBar: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 12))
-                
+
                 TextField("Find…", text: $state.searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
@@ -235,7 +345,7 @@ struct FindReplaceBar: View {
                     .onChange(of: state.searchText) { _, val in
                         onFind(val, state.caseSensitive)
                     }
-                
+
                 if !state.searchText.isEmpty {
                     Text(state.matchCount > 0
                          ? "\(state.currentMatch + 1)/\(state.matchCount)"
@@ -244,8 +354,7 @@ struct FindReplaceBar: View {
                         .foregroundStyle(.secondary)
                         .fixedSize()
                 }
-                
-                // Case sensitive toggle
+
                 Button(action: {
                     state.caseSensitive.toggle()
                     onFind(state.searchText, state.caseSensitive)
@@ -259,19 +368,19 @@ struct FindReplaceBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Case Sensitive")
-                
+
                 Button(action: onFindPrevious) {
                     Image(systemName: "chevron.up").font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.plain)
                 .disabled(state.matchCount == 0)
-                
+
                 Button(action: onFindNext) {
                     Image(systemName: "chevron.down").font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.plain)
                 .disabled(state.matchCount == 0)
-                
+
                 Button(action: { state.showReplace.toggle() }) {
                     Image(systemName: "arrow.2.squarepath")
                         .font(.system(size: 11))
@@ -279,7 +388,7 @@ struct FindReplaceBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Toggle Replace")
-                
+
                 Button(action: {
                     onClose()
                     state.isVisible = false
@@ -293,19 +402,19 @@ struct FindReplaceBar: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            
+
             // Replace row
             if state.showReplace {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .foregroundStyle(.secondary)
                         .font(.system(size: 12))
-                    
+
                     TextField("Replace…", text: $state.replaceText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .onSubmit { onReplace(state.replaceText) }
-                    
+
                     Button("Replace") { onReplace(state.replaceText) }
                         .buttonStyle(.plain)
                         .font(.system(size: 12))
@@ -314,7 +423,7 @@ struct FindReplaceBar: View {
                         .background(Color.primary.opacity(0.06))
                         .cornerRadius(4)
                         .disabled(state.matchCount == 0)
-                    
+
                     Button("All") { onReplaceAll(state.replaceText) }
                         .buttonStyle(.plain)
                         .font(.system(size: 12))
@@ -327,7 +436,7 @@ struct FindReplaceBar: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
             }
-            
+
             Divider()
         }
         #if os(macOS)
@@ -335,5 +444,54 @@ struct FindReplaceBar: View {
         #else
         .background(Color(uiColor: .systemBackground))
         #endif
+    }
+}
+
+// MARK: - Color Extensions
+
+extension Color {
+    /// 返回 "#RRGGBB" 格式的十六进制字符串
+    var hexString: String? {
+        #if os(macOS)
+        guard let c = NSColor(self).usingColorSpace(.sRGB) else { return nil }
+        let r = Int(c.redComponent   * 255)
+        let g = Int(c.greenComponent * 255)
+        let b = Int(c.blueComponent  * 255)
+        #else
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a)
+        let ri = Int(r * 255), gi = Int(g * 255), bi = Int(b * 255)
+        #endif
+        return String(format: "#%02X%02X%02X", r, g, b)
+    }
+
+    /// 从 CSS 颜色字符串初始化（支持 #RRGGBB 和 rgb(r,g,b)）
+    init?(cssString: String) {
+        let s = cssString.trimmingCharacters(in: .whitespaces)
+
+        // rgb(r, g, b) / rgba(r, g, b, a)
+        if s.hasPrefix("rgb") {
+            let nums = s
+                .replacingOccurrences(of: "rgba(", with: "")
+                .replacingOccurrences(of: "rgb(", with: "")
+                .replacingOccurrences(of: ")", with: "")
+                .split(separator: ",")
+                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            guard nums.count >= 3 else { return nil }
+            self = Color(red: nums[0] / 255, green: nums[1] / 255, blue: nums[2] / 255)
+            return
+        }
+
+        // #RRGGBB / #RGB
+        var hex = s.hasPrefix("#") ? String(s.dropFirst()) : s
+        if hex.count == 3 {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+        guard hex.count == 6, let value = UInt64(hex, radix: 16) else { return nil }
+        self = Color(
+            red:   Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8)  & 0xFF) / 255,
+            blue:  Double( value        & 0xFF) / 255
+        )
     }
 }
