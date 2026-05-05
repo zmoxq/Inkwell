@@ -72,6 +72,9 @@ struct ContentView: View {
                         } else {
                             findReplaceState.isVisible = true
                         }
+                    },
+                    onToggleTOC: {
+                        editorCoordinator?.toggleTOC()
                     }
                 )
                 
@@ -120,6 +123,10 @@ struct ContentView: View {
                 .environmentObject(appState)
             }
             .id(doc.id)
+            .navigationTitle(doc.url.deletingPathExtension().lastPathComponent)
+            #if os(macOS)
+            .navigationSubtitle(doc.isDirty ? "Edited" : "")
+            #endif
             .ignoresSafeArea(.keyboard)
         } else {
             emptyStateView

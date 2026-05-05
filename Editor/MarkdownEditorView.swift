@@ -285,6 +285,12 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         webView.evaluateJavaScript("window.InkwellEditor.closeFindReplace();")
     }
     
+    // MARK: - Table of Contents
+    
+    func toggleTOC() {
+        webView.evaluateJavaScript("window.InkwellEditor.toggleTOC();")
+    }
+    
     // MARK: - Scroll to Heading (outline navigation)
     
     func scrollToHeading(title: String, level: Int) {

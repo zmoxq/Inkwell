@@ -68,113 +68,126 @@ struct EditorToolbarView: View {
     @ObservedObject var formatState: EditorFormatState
     var onFormat: (String) -> Void
     var onFindReplace: () -> Void
+    var onToggleTOC: () -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                // Block type picker
-                blockTypePicker
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    // Block type picker
+                    blockTypePicker
 
-                toolbarDivider
+                    toolbarDivider
 
-                // Inline formatting
-                FormatBtn(icon: "bold", tip: "Bold (⌘B)", active: formatState.isBold) {
-                    onFormat("bold")
-                }
-                FormatBtn(icon: "italic", tip: "Italic (⌘I)", active: formatState.isItalic) {
-                    onFormat("italic")
-                }
-                FormatBtn(icon: "strikethrough", tip: "Strikethrough (⌘⇧D)", active: formatState.isStrikethrough) {
-                    onFormat("strikethrough")
-                }
-                FormatBtn(icon: "chevron.left.forwardslash.chevron.right", tip: "Code (⌘E)", active: formatState.isInlineCode) {
-                    onFormat("inlineCode")
-                }
+                    // Inline formatting
+                    FormatBtn(icon: "bold", tip: "Bold (⌘B)", active: formatState.isBold) {
+                        onFormat("bold")
+                    }
+                    FormatBtn(icon: "italic", tip: "Italic (⌘I)", active: formatState.isItalic) {
+                        onFormat("italic")
+                    }
+                    FormatBtn(icon: "strikethrough", tip: "Strikethrough (⌘⇧D)", active: formatState.isStrikethrough) {
+                        onFormat("strikethrough")
+                    }
+                    FormatBtn(icon: "chevron.left.forwardslash.chevron.right", tip: "Code (⌘E)", active: formatState.isInlineCode) {
+                        onFormat("inlineCode")
+                    }
 
-                toolbarDivider
+                    toolbarDivider
 
-                // Color pickers
-                ColorPickerBtn(
-                    icon: "textformat",
-                    indicatorColor: formatState.hasTextColor ? formatState.textColor : Color.primary.opacity(0.25),
-                    tooltip: "字体颜色",
-                    onColorPicked: { color in
-                        if let hex = color.hexString {
-                            onFormat("textColor:\(hex)")
-                        }
-                    },
-                    onClear: { onFormat("textColor:") }
-                )
+                    // Color pickers
+                    ColorPickerBtn(
+                        icon: "textformat",
+                        indicatorColor: formatState.hasTextColor ? formatState.textColor : Color.primary.opacity(0.25),
+                        tooltip: "字体颜色",
+                        onColorPicked: { color in
+                            if let hex = color.hexString {
+                                onFormat("textColor:\(hex)")
+                            }
+                        },
+                        onClear: { onFormat("textColor:") }
+                    )
 
-                ColorPickerBtn(
-                    icon: "highlighter",
-                    indicatorColor: formatState.hasBgColor ? formatState.bgColor : Color.primary.opacity(0.25),
-                    tooltip: "背景色",
-                    onColorPicked: { color in
-                        if let hex = color.hexString {
-                            onFormat("bgColor:\(hex)")
-                        }
-                    },
-                    onClear: { onFormat("bgColor:") }
-                )
+                    ColorPickerBtn(
+                        icon: "highlighter",
+                        indicatorColor: formatState.hasBgColor ? formatState.bgColor : Color.primary.opacity(0.25),
+                        tooltip: "背景色",
+                        onColorPicked: { color in
+                            if let hex = color.hexString {
+                                onFormat("bgColor:\(hex)")
+                            }
+                        },
+                        onClear: { onFormat("bgColor:") }
+                    )
 
-                toolbarDivider
+                    toolbarDivider
 
-                // Lists
-                FormatBtn(icon: "list.bullet", tip: "Bullet List (⌘⇧8)", active: formatState.blockType == "bulletList") {
-                    onFormat("bulletList")
-                }
-                FormatBtn(icon: "list.number", tip: "Numbered List (⌘⇧9)", active: formatState.blockType == "orderedList") {
-                    onFormat("orderedList")
-                }
-                FormatBtn(icon: "checklist", tip: "Task List (⌘⇧X)", active: formatState.blockType == "taskList") {
-                    onFormat("taskList")
-                }
+                    // Lists
+                    FormatBtn(icon: "list.bullet", tip: "Bullet List (⌘⇧8)", active: formatState.blockType == "bulletList") {
+                        onFormat("bulletList")
+                    }
+                    FormatBtn(icon: "list.number", tip: "Numbered List (⌘⇧9)", active: formatState.blockType == "orderedList") {
+                        onFormat("orderedList")
+                    }
+                    FormatBtn(icon: "checklist", tip: "Task List (⌘⇧X)", active: formatState.blockType == "taskList") {
+                        onFormat("taskList")
+                    }
 
-                toolbarDivider
+                    toolbarDivider
 
-                // Block elements
-                FormatBtn(icon: "text.quote", tip: "Quote (⌘⇧')", active: formatState.blockType == "blockquote") {
-                    onFormat("blockquote")
-                }
-                FormatBtn(icon: "curlybraces", tip: "Code Block (⌘⇧E)", active: formatState.blockType == "codeBlock") {
-                    onFormat("codeBlock")
-                }
-                FormatBtn(icon: "minus", tip: "Horizontal Rule", active: false) {
-                    onFormat("horizontalRule")
-                }
+                    // Block elements
+                    FormatBtn(icon: "text.quote", tip: "Quote (⌘⇧')", active: formatState.blockType == "blockquote") {
+                        onFormat("blockquote")
+                    }
+                    FormatBtn(icon: "curlybraces", tip: "Code Block (⌘⇧E)", active: formatState.blockType == "codeBlock") {
+                        onFormat("codeBlock")
+                    }
+                    FormatBtn(icon: "minus", tip: "Horizontal Rule", active: false) {
+                        onFormat("horizontalRule")
+                    }
 
-                toolbarDivider
+                    toolbarDivider
 
-                // Insert
-                FormatBtn(icon: "link", tip: "Link (⌘K)", active: formatState.isLink) {
-                    onFormat("link")
-                }
-                FormatBtn(icon: "tablecells", tip: "Insert Table", active: false) {
-                    onFormat("table")
-                }
-                FormatBtn(icon: "rectangle.on.rectangle", tip: "Insert Image Carousel", active: false) {
-                    onFormat("carousel")
-                }
+                    // Insert
+                    FormatBtn(icon: "link", tip: "Link (⌘K)", active: formatState.isLink) {
+                        onFormat("link")
+                    }
+                    FormatBtn(icon: "tablecells", tip: "Insert Table", active: false) {
+                        onFormat("table")
+                    }
+                    FormatBtn(icon: "rectangle.on.rectangle", tip: "Insert Image Carousel", active: false) {
+                        onFormat("carousel")
+                    }
 
-                toolbarDivider
+                    toolbarDivider
 
-                // Indent
-                FormatBtn(icon: "increase.indent", tip: "Indent", active: false) {
-                    onFormat("increaseIndent")
-                }
-                FormatBtn(icon: "decrease.indent", tip: "Outdent", active: false) {
-                    onFormat("decreaseIndent")
-                }
+                    // Indent
+                    FormatBtn(icon: "increase.indent", tip: "Indent", active: false) {
+                        onFormat("increaseIndent")
+                    }
+                    FormatBtn(icon: "decrease.indent", tip: "Outdent", active: false) {
+                        onFormat("decreaseIndent")
+                    }
 
-                Spacer()
+                    Spacer()
 
-                // Find & Replace
-                FormatBtn(icon: "magnifyingglass", tip: "Find (⌘F)", active: false) {
-                    onFindReplace()
+                    // Find & Replace
+                    FormatBtn(icon: "magnifyingglass", tip: "Find (⌘F)", active: false) {
+                        onFindReplace()
+                    }
                 }
+                .padding(.horizontal, 12)
             }
-            .padding(.horizontal, 12)
+
+            Divider()
+                .frame(height: 16)
+                .padding(.horizontal, 2)
+
+            // Outline — fixed right, outside scroll
+            FormatBtn(icon: "list.bullet.indent", tip: "Outline", active: false) {
+                onToggleTOC()
+            }
+            .padding(.trailing, 8)
         }
         .frame(height: 32)
         #if os(macOS)

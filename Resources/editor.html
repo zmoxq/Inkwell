@@ -350,6 +350,369 @@
     .inkwell-dialog-cancel:hover { background: #383838; }
     .inkwell-img-empty { color: #666; }
   }
+
+  /* ========== Slash Menu ========== */
+  .inkwell-slash-menu {
+    position: fixed;
+    z-index: 9999;
+    min-width: 260px;
+    max-width: 320px;
+    max-height: 340px;
+    overflow-y: auto;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border, #ddd);
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
+    padding: 6px 0;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+    font-family: var(--font-body, -apple-system, BlinkMacSystemFont, sans-serif);
+    scrollbar-width: thin;
+  }
+  .inkwell-slash-menu.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .inkwell-slash-menu::-webkit-scrollbar { width: 4px; }
+  .inkwell-slash-menu::-webkit-scrollbar-thumb { background: var(--text-muted, #ccc); border-radius: 4px; }
+
+  .inkwell-slash-category {
+    padding: 4px 14px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted, #999);
+    user-select: none;
+  }
+  .inkwell-slash-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: background 0.1s ease;
+    user-select: none;
+  }
+  .inkwell-slash-item:hover,
+  .inkwell-slash-item.active {
+    background: var(--accent-light, rgba(0, 196, 182, 0.1));
+  }
+  .inkwell-slash-item.active {
+    background: var(--accent-light, rgba(0, 196, 182, 0.15));
+  }
+  .inkwell-slash-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: var(--bg-secondary, #f5f5f5);
+    font-size: 16px;
+    flex-shrink: 0;
+    color: var(--text-primary, #333);
+  }
+  .inkwell-slash-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .inkwell-slash-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary, #333);
+    line-height: 1.3;
+  }
+  .inkwell-slash-desc {
+    font-size: 11px;
+    color: var(--text-muted, #999);
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .inkwell-slash-shortcut {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted, #bbb);
+    font-family: var(--font-mono, monospace);
+    flex-shrink: 0;
+  }
+  .inkwell-slash-empty {
+    padding: 16px 14px;
+    text-align: center;
+    color: var(--text-muted, #999);
+    font-size: 13px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .inkwell-slash-menu {
+      box-shadow: 0 8px 30px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .inkwell-slash-icon {
+      background: var(--bg-secondary, #2a2a2a);
+    }
+  }
+
+  /* ========== Foldable Headings ========== */
+  .inkwell-fold-toggle {
+    position: absolute;
+    left: -24px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.2s ease;
+    color: var(--text-muted, #aaa);
+    font-size: 12px;
+    border-radius: 3px;
+    user-select: none;
+    -webkit-user-select: none;
+    line-height: 1;
+  }
+  .inkwell-fold-toggle:hover {
+    background: var(--bg-secondary, #f0f0f0);
+    color: var(--text-primary, #333);
+  }
+  /* Show toggle on heading hover or when folded */
+  h1:hover > .inkwell-fold-toggle,
+  h2:hover > .inkwell-fold-toggle,
+  h3:hover > .inkwell-fold-toggle,
+  h4:hover > .inkwell-fold-toggle,
+  h5:hover > .inkwell-fold-toggle,
+  h6:hover > .inkwell-fold-toggle,
+  .inkwell-folded > .inkwell-fold-toggle {
+    opacity: 1;
+  }
+  /* Headings need relative positioning for the toggle */
+  #editor h1, #editor h2, #editor h3,
+  #editor h4, #editor h5, #editor h6 {
+    position: relative;
+  }
+  /* Folded state */
+  .inkwell-folded > .inkwell-fold-toggle {
+    opacity: 0.6;
+  }
+  .inkwell-folded > .inkwell-fold-toggle::after {
+    content: '▶';
+  }
+  .inkwell-fold-toggle::after {
+    content: '▼';
+  }
+  .inkwell-fold-hidden {
+    display: none !important;
+  }
+  /* Folded heading indicator */
+  .inkwell-folded::after {
+    content: '⋯';
+    display: inline-block;
+    margin-left: 8px;
+    color: var(--text-muted, #bbb);
+    font-size: 0.6em;
+    vertical-align: middle;
+    font-weight: normal;
+  }
+
+  /* ========== Word Count Status Bar ========== */
+  .inkwell-status-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    padding: 0 16px;
+    background: var(--bg-secondary, #f8f8f8);
+    border-top: 1px solid var(--border, #e5e5e5);
+    font-family: var(--font-body, -apple-system, BlinkMacSystemFont, sans-serif);
+    font-size: 11px;
+    color: var(--text-muted, #999);
+    z-index: 100;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: opacity 0.2s ease;
+  }
+  .inkwell-status-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .inkwell-status-sep {
+    width: 1px;
+    height: 12px;
+    background: var(--border, #ddd);
+  }
+  /* Focus mode button in status bar */
+  .inkwell-status-btn {
+    cursor: pointer;
+    padding: 1px 6px;
+    border-radius: 3px;
+    transition: background 0.1s ease;
+  }
+  .inkwell-status-btn:hover {
+    background: var(--accent-light, rgba(0,196,182,0.12));
+    color: var(--text-primary, #555);
+  }
+  .inkwell-status-btn.active {
+    background: var(--accent-light, rgba(0,196,182,0.2));
+    color: var(--accent, #00c4b6);
+  }
+  /* Make room for status bar */
+  .editor-container {
+    padding-bottom: 30px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .inkwell-status-bar {
+      background: var(--bg-secondary, #1e1e1e);
+      border-top-color: var(--border, #333);
+    }
+  }
+
+  /* ========== Focus Mode ========== */
+  .inkwell-focus-mode #editor > *:not(.inkwell-focus-active):not(.inkwell-fold-hidden) {
+    opacity: 0.25;
+    transition: opacity 0.3s ease;
+  }
+  .inkwell-focus-mode #editor > .inkwell-focus-active {
+    opacity: 1;
+    transition: opacity 0.3s ease;
+  }
+
+  /* ========== Typewriter Mode ========== */
+  /* Handled via JS scroll, no special CSS needed */
+
+  /* ========== Drag Handle ========== */
+  .inkwell-drag-handle {
+    position: absolute;
+    left: -40px;
+    top: 4px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    color: var(--text-muted, #bbb);
+    font-size: 14px;
+    border-radius: 4px;
+    user-select: none;
+    -webkit-user-select: none;
+    z-index: 5;
+    line-height: 1;
+  }
+  .inkwell-drag-handle:hover {
+    background: var(--bg-secondary, #f0f0f0);
+    color: var(--text-primary, #666);
+    opacity: 1 !important;
+  }
+  .inkwell-drag-handle:active { cursor: grabbing; }
+  /* Show on block hover */
+  #editor > *:hover > .inkwell-drag-handle { opacity: 0.5; }
+  /* All top-level editor blocks need relative positioning */
+  #editor > * { position: relative; }
+  /* Drag-over indicator line */
+  .inkwell-drag-indicator {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent, #00c4b6);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 9998;
+    transition: top 0.08s ease;
+  }
+  /* Dragging state */
+  .inkwell-dragging { opacity: 0.4; }
+
+  /* ========== Outline (Floating Panel) ========== */
+  .inkwell-toc-panel {
+    position: fixed;
+    top: 50px;
+    right: 16px;
+    width: 260px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border, #e0e0e0);
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05);
+    padding: 10px 0;
+    z-index: 199;
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    pointer-events: none;
+    scrollbar-width: thin;
+  }
+  .inkwell-toc-panel.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+  .inkwell-toc-panel::-webkit-scrollbar { width: 4px; }
+  .inkwell-toc-panel::-webkit-scrollbar-thumb { background: var(--text-muted, #ccc); border-radius: 4px; }
+  .inkwell-toc-title {
+    padding: 2px 14px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted, #999);
+    user-select: none;
+  }
+  .inkwell-toc-item {
+    display: block;
+    padding: 4px 14px;
+    font-size: 13px;
+    color: var(--text-primary, #333);
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.1s;
+    line-height: 1.5;
+    border-radius: 0;
+  }
+  .inkwell-toc-item:hover {
+    background: var(--accent-light, rgba(0,196,182,0.08));
+  }
+  .inkwell-toc-item.active {
+    color: var(--accent, #00c4b6);
+    font-weight: 500;
+    background: var(--accent-light, rgba(0,196,182,0.06));
+  }
+  .inkwell-toc-h2 { padding-left: 28px; }
+  .inkwell-toc-h3 { padding-left: 42px; font-size: 12px; }
+  .inkwell-toc-h4 { padding-left: 56px; font-size: 12px; color: var(--text-muted, #999); }
+  .inkwell-toc-h5 { padding-left: 66px; font-size: 11px; color: var(--text-muted, #aaa); }
+  .inkwell-toc-h6 { padding-left: 76px; font-size: 11px; color: var(--text-muted, #aaa); }
+  .inkwell-toc-empty {
+    padding: 16px 14px;
+    text-align: center;
+    color: var(--text-muted, #bbb);
+    font-size: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .inkwell-toc-panel {
+      box-shadow: 0 8px 30px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.15);
+    }
+  }
 </style>
 </head>
 <body>
@@ -357,6 +720,17 @@
   <div id="editor" contenteditable="true"></div>
 </div>
 <div id="inkwell-carousel-dialog" style="display:none"></div>
+<div class="inkwell-status-bar" id="inkwell-status-bar">
+  <div class="inkwell-status-item" id="inkwell-stat-words">0 words</div>
+  <div class="inkwell-status-sep"></div>
+  <div class="inkwell-status-item" id="inkwell-stat-chars">0 chars</div>
+  <div class="inkwell-status-sep"></div>
+  <div class="inkwell-status-item" id="inkwell-stat-read">0 min read</div>
+  <div class="inkwell-status-sep"></div>
+  <div class="inkwell-status-btn" id="inkwell-btn-focus" title="Focus Mode">Focus</div>
+  <div class="inkwell-status-btn" id="inkwell-btn-typewriter" title="Typewriter Mode">Typewriter</div>
+</div>
+<div class="inkwell-toc-panel" id="inkwell-toc-panel"></div>
 
 <script>
 (function() {
@@ -586,6 +960,8 @@
     serializeNode(node) {
       if (node.nodeType === Node.TEXT_NODE) return node.textContent;
       if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      // Skip fold toggle buttons and drag handles
+      if (node.classList && (node.classList.contains('inkwell-fold-toggle') || node.classList.contains('inkwell-drag-handle'))) return '';
       const tag = node.tagName.toLowerCase();
       const inner = this.serializeChildren(node);
 
@@ -1781,6 +2157,905 @@
   };
 
   // ----------------------------------------------------------
+  // Drag & Drop Block Sorting
+  // ----------------------------------------------------------
+  const DragSort = {
+    editor: null,
+    draggedBlock: null,
+    indicator: null,
+    insertBefore: null, // the element before which we'll insert
+
+    init(editor) {
+      this.editor = editor;
+
+      // Create drop indicator line
+      this.indicator = document.createElement('div');
+      this.indicator.className = 'inkwell-drag-indicator';
+      this.indicator.style.display = 'none';
+      document.querySelector('.editor-container').appendChild(this.indicator);
+
+      // Use event delegation on the editor
+      this.editor.element.addEventListener('mousedown', (e) => {
+        const handle = e.target.closest('.inkwell-drag-handle');
+        if (!handle) return;
+        e.preventDefault();
+        this._startDrag(handle.parentElement, e);
+      });
+    },
+
+    refresh() {
+      // Add drag handles to top-level blocks (skip hr)
+      const children = this.editor.element.children;
+      for (let i = 0; i < children.length; i++) {
+        const block = children[i];
+        if (block.nodeType !== Node.ELEMENT_NODE) continue;
+        if (block.querySelector('.inkwell-drag-handle')) continue;
+        if (block.tagName === 'HR') continue;
+        const handle = document.createElement('span');
+        handle.className = 'inkwell-drag-handle';
+        handle.setAttribute('contenteditable', 'false');
+        handle.textContent = '⠿';
+        // For headings, insert after fold toggle (if present)
+        const foldToggle = block.querySelector('.inkwell-fold-toggle');
+        if (foldToggle) {
+          foldToggle.after(handle);
+        } else {
+          block.insertBefore(handle, block.firstChild);
+        }
+      }
+      // Remove orphaned handles
+      this.editor.element.querySelectorAll('.inkwell-drag-handle').forEach(h => {
+        if (!h.parentElement || h.parentElement === this.editor.element) h.remove();
+      });
+    },
+
+    _startDrag(block, startEvent) {
+      this.draggedBlock = block;
+      block.classList.add('inkwell-dragging');
+
+      const editorRect = this.editor.element.getBoundingClientRect();
+      const blocks = Array.from(this.editor.element.children).filter(
+        el => el.nodeType === Node.ELEMENT_NODE && el !== this.indicator
+      );
+
+      const onMouseMove = (e) => {
+        e.preventDefault();
+        this.indicator.style.display = 'block';
+
+        const mouseY = e.clientY;
+        let closestBlock = null;
+        let closestDist = Infinity;
+        let insertBeforeEl = null;
+
+        for (const b of blocks) {
+          if (b === this.draggedBlock) continue;
+          const rect = b.getBoundingClientRect();
+          const midY = rect.top + rect.height / 2;
+          const dist = Math.abs(mouseY - midY);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestBlock = b;
+            insertBeforeEl = mouseY < midY ? b : b.nextElementSibling;
+          }
+        }
+
+        this.insertBefore = insertBeforeEl;
+
+        // Position indicator
+        if (insertBeforeEl && insertBeforeEl.getBoundingClientRect) {
+          const r = insertBeforeEl.getBoundingClientRect();
+          this.indicator.style.top = (r.top - editorRect.top + this.editor.element.scrollTop - 1) + 'px';
+        } else {
+          // Insert at end
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock) {
+            const r = lastBlock.getBoundingClientRect();
+            this.indicator.style.top = (r.bottom - editorRect.top + this.editor.element.scrollTop + 1) + 'px';
+          }
+        }
+        this.indicator.style.left = '0';
+        this.indicator.style.right = '0';
+        this.indicator.style.position = 'absolute';
+      };
+
+      const onMouseUp = (e) => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        this.indicator.style.display = 'none';
+        block.classList.remove('inkwell-dragging');
+
+        if (this.insertBefore && this.insertBefore !== this.draggedBlock &&
+            this.insertBefore !== this.draggedBlock.nextElementSibling) {
+          this.editor.element.insertBefore(this.draggedBlock, this.insertBefore);
+        } else if (!this.insertBefore && this.draggedBlock !== this.editor.element.lastElementChild) {
+          this.editor.element.appendChild(this.draggedBlock);
+        }
+
+        this.draggedBlock = null;
+        this.insertBefore = null;
+        this.editor.onContentChange();
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Outline (Floating Panel)
+  // ----------------------------------------------------------
+  const TableOfContents = {
+    editor: null,
+    btnEl: null,
+    panelEl: null,
+    isOpen: false,
+    debounceTimer: null,
+
+    init(editor) {
+      this.editor = editor;
+      this.panelEl = document.getElementById('inkwell-toc-panel');
+
+      // Close on outside click
+      document.addEventListener('mousedown', (e) => {
+        if (this.isOpen && !this.panelEl.contains(e.target)) {
+          this.close();
+          // Notify Swift so toolbar button state stays in sync
+          this.editor.postMessage('tocToggled', { isOpen: false });
+        }
+      });
+
+      // Highlight active heading on scroll
+      window.addEventListener('scroll', () => {
+        if (this.isOpen) this._highlightActive();
+      }, { passive: true });
+    },
+
+    toggle() {
+      if (this.isOpen) this.close();
+      else this.open();
+    },
+
+    open() {
+      this.isOpen = true;
+      this.refresh();
+      this.panelEl.classList.add('visible');
+      this._highlightActive();
+    },
+
+    close() {
+      this.isOpen = false;
+      this.panelEl.classList.remove('visible');
+    },
+
+    // Rebuild TOC entries — debounced for content changes
+    scheduleRefresh() {
+      if (!this.isOpen) return;
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = setTimeout(() => this.refresh(), 400);
+    },
+
+    refresh() {
+      const headings = this.editor.element.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      if (headings.length === 0) {
+        this.panelEl.innerHTML = '<div class="inkwell-toc-empty">No headings yet</div>';
+        return;
+      }
+
+      let html = '<div class="inkwell-toc-title">Outline</div>';
+      // Build auto-numbering counters (H1 not numbered, H2=1., H3=1.1, etc.)
+      const counters = [0, 0, 0, 0, 0, 0]; // h1..h6
+      headings.forEach((h, idx) => {
+        const level = parseInt(h.tagName.charAt(1), 10);
+        const text = h.textContent.replace(/[▶▼⋯⠿]/g, '').trim();
+        if (!text) return;
+        // Increment current level counter, reset deeper levels
+        counters[level - 1]++;
+        for (let i = level; i < 6; i++) counters[i] = 0;
+        // Build number string: skip H1 (no number), H2="1.", H3="1.1", etc.
+        let numStr = '';
+        if (level >= 2) {
+          const parts = [];
+          for (let i = 1; i < level; i++) parts.push(counters[i]);
+          numStr = parts.join('.') + '  ';
+        }
+        html += '<div class="inkwell-toc-item inkwell-toc-h' + level + '" data-toc-idx="' + idx + '">'
+          + '<span style="color:var(--text-muted,#999);font-size:0.9em;">' + numStr + '</span>'
+          + this._escapeHtml(text)
+          + '</div>';
+      });
+      this.panelEl.innerHTML = html;
+
+      // Bind click handlers
+      this.panelEl.querySelectorAll('.inkwell-toc-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const idx = parseInt(item.dataset.tocIdx, 10);
+          const allH = this.editor.element.querySelectorAll('h1,h2,h3,h4,h5,h6');
+          const target = allH[idx];
+          if (!target) return;
+
+          // Reveal if folded
+          FoldableHeadings.revealElement(target);
+
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // Place cursor
+          const range = document.createRange();
+          range.selectNodeContents(target);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+
+          this._highlightActive();
+        });
+      });
+    },
+
+    _highlightActive() {
+      const headings = this.editor.element.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      const items = this.panelEl.querySelectorAll('.inkwell-toc-item');
+      if (headings.length === 0 || items.length === 0) return;
+
+      // Find the heading closest to the top of the viewport
+      let activeIdx = 0;
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      for (let i = 0; i < headings.length; i++) {
+        const rect = headings[i].getBoundingClientRect();
+        if (rect.top <= 60) activeIdx = i;
+        else break;
+      }
+
+      items.forEach(item => {
+        item.classList.toggle('active', parseInt(item.dataset.tocIdx, 10) === activeIdx);
+      });
+
+      // Scroll active item into view in panel
+      const activeItem = this.panelEl.querySelector('.inkwell-toc-item.active');
+      if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
+    },
+
+    _escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Foldable Headings
+  // ----------------------------------------------------------
+  const FoldableHeadings = {
+    editor: null,
+
+    init(editor) {
+      this.editor = editor;
+      // Attach toggles after load and on content change
+      this.editor.element.addEventListener('click', (e) => {
+        const toggle = e.target.closest('.inkwell-fold-toggle');
+        if (toggle) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.toggleFold(toggle.parentElement);
+        }
+      });
+    },
+
+    // Call after loadMarkdown or content changes that add/remove headings
+    refresh() {
+      const headings = this.editor.element.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      headings.forEach(h => {
+        if (!h.querySelector('.inkwell-fold-toggle')) {
+          const btn = document.createElement('span');
+          btn.className = 'inkwell-fold-toggle';
+          btn.setAttribute('contenteditable', 'false');
+          h.insertBefore(btn, h.firstChild);
+        }
+      });
+      // Remove orphaned toggles from non-heading elements
+      this.editor.element.querySelectorAll('.inkwell-fold-toggle').forEach(btn => {
+        if (!btn.parentElement || !/^H[1-6]$/.test(btn.parentElement.tagName)) {
+          btn.remove();
+        }
+      });
+    },
+
+    toggleFold(heading) {
+      const isFolded = heading.classList.contains('inkwell-folded');
+      if (isFolded) {
+        this.unfold(heading);
+      } else {
+        this.fold(heading);
+      }
+    },
+
+    fold(heading) {
+      const level = parseInt(heading.tagName.charAt(1), 10);
+      heading.classList.add('inkwell-folded');
+
+      let sibling = heading.nextElementSibling;
+      while (sibling) {
+        // Stop at same level or higher heading
+        if (/^H[1-6]$/.test(sibling.tagName)) {
+          const sibLevel = parseInt(sibling.tagName.charAt(1), 10);
+          if (sibLevel <= level) break;
+        }
+        sibling.classList.add('inkwell-fold-hidden');
+        sibling.setAttribute('data-folded-by', heading.tagName + '-' + this._headingId(heading));
+        sibling = sibling.nextElementSibling;
+      }
+    },
+
+    unfold(heading) {
+      const hId = heading.tagName + '-' + this._headingId(heading);
+      heading.classList.remove('inkwell-folded');
+
+      let sibling = heading.nextElementSibling;
+      while (sibling) {
+        if (/^H[1-6]$/.test(sibling.tagName)) {
+          const sibLevel = parseInt(sibling.tagName.charAt(1), 10);
+          const headLevel = parseInt(heading.tagName.charAt(1), 10);
+          if (sibLevel <= headLevel) break;
+        }
+        if (sibling.getAttribute('data-folded-by') === hId) {
+          sibling.classList.remove('inkwell-fold-hidden');
+          sibling.removeAttribute('data-folded-by');
+        }
+        sibling = sibling.nextElementSibling;
+      }
+    },
+
+    // Unfold a heading (and its ancestors) to reveal target element
+    revealElement(el) {
+      // Walk up and unfold any folded headings that hide this element
+      let node = el;
+      while (node && node !== this.editor.element) {
+        if (node.classList && node.classList.contains('inkwell-fold-hidden')) {
+          // Find which heading folded this
+          const foldedBy = node.getAttribute('data-folded-by');
+          if (foldedBy) {
+            // Find the heading that folded it
+            const allHeadings = this.editor.element.querySelectorAll('.inkwell-folded');
+            allHeadings.forEach(h => {
+              const hId = h.tagName + '-' + this._headingId(h);
+              if (hId === foldedBy) this.unfold(h);
+            });
+          }
+        }
+        node = node.parentElement;
+      }
+      // Also unfold if the element itself is fold-hidden
+      if (el.classList && el.classList.contains('inkwell-fold-hidden')) {
+        el.classList.remove('inkwell-fold-hidden');
+      }
+    },
+
+    _headingId(h) {
+      // Simple ID based on text content hash
+      const text = h.textContent.replace(/[▶▼⋯]/g, '').trim();
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) {
+        hash = ((hash << 5) - hash) + text.charCodeAt(i);
+        hash |= 0;
+      }
+      return Math.abs(hash).toString(36);
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Word Count & Status Bar
+  // ----------------------------------------------------------
+  const WordCount = {
+    editor: null,
+    wordsEl: null,
+    charsEl: null,
+    readEl: null,
+    debounceTimer: null,
+
+    init(editor) {
+      this.editor = editor;
+      this.wordsEl = document.getElementById('inkwell-stat-words');
+      this.charsEl = document.getElementById('inkwell-stat-chars');
+      this.readEl = document.getElementById('inkwell-stat-read');
+    },
+
+    update() {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = setTimeout(() => this._compute(), 300);
+    },
+
+    _compute() {
+      const text = this.editor.element.innerText || '';
+      // Characters (excluding line breaks)
+      const chars = text.replace(/\n/g, '').length;
+
+      // Words: handle CJK (Chinese/Japanese/Korean) + Latin
+      // CJK characters count as 1 word each
+      const cjkCount = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g) || []).length;
+      // Latin words
+      const stripped = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/g, ' ');
+      const latinWords = stripped.split(/\s+/).filter(w => w.length > 0).length;
+      const words = cjkCount + latinWords;
+
+      // Reading time: ~250 wpm for Latin, ~500 cpm for CJK
+      const readMinutes = Math.max(1, Math.ceil((latinWords / 250) + (cjkCount / 500)));
+
+      if (this.wordsEl) this.wordsEl.textContent = words.toLocaleString() + ' words';
+      if (this.charsEl) this.charsEl.textContent = chars.toLocaleString() + ' chars';
+      if (this.readEl) this.readEl.textContent = readMinutes + ' min read';
+
+      // Also send to Swift for potential display in native UI
+      this.editor.postMessage('wordCount', { words, chars, readMinutes });
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Focus Mode & Typewriter Mode
+  // ----------------------------------------------------------
+  const FocusMode = {
+    editor: null,
+    focusEnabled: false,
+    typewriterEnabled: false,
+    focusBtn: null,
+    typewriterBtn: null,
+
+    init(editor) {
+      this.editor = editor;
+      this.focusBtn = document.getElementById('inkwell-btn-focus');
+      this.typewriterBtn = document.getElementById('inkwell-btn-typewriter');
+
+      this.focusBtn.addEventListener('click', () => this.toggleFocus());
+      this.typewriterBtn.addEventListener('click', () => this.toggleTypewriter());
+
+      // Update focus highlight on selection change
+      document.addEventListener('selectionchange', () => {
+        if (this.focusEnabled) this._updateFocusHighlight();
+        if (this.typewriterEnabled) this._scrollToCurrentLine();
+      });
+    },
+
+    toggleFocus() {
+      this.focusEnabled = !this.focusEnabled;
+      this.focusBtn.classList.toggle('active', this.focusEnabled);
+      document.querySelector('.editor-container').classList.toggle('inkwell-focus-mode', this.focusEnabled);
+      if (this.focusEnabled) {
+        this._updateFocusHighlight();
+      } else {
+        // Remove all focus-active classes
+        this.editor.element.querySelectorAll('.inkwell-focus-active').forEach(el => {
+          el.classList.remove('inkwell-focus-active');
+        });
+      }
+    },
+
+    toggleTypewriter() {
+      this.typewriterEnabled = !this.typewriterEnabled;
+      this.typewriterBtn.classList.toggle('active', this.typewriterEnabled);
+      if (this.typewriterEnabled) this._scrollToCurrentLine();
+    },
+
+    _updateFocusHighlight() {
+      if (!this.focusEnabled) return;
+
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+
+      let node = sel.anchorNode;
+      // Walk up to find the top-level block in the editor
+      let block = null;
+      while (node && node !== this.editor.element) {
+        if (node.parentNode === this.editor.element) {
+          block = node;
+          break;
+        }
+        node = node.parentNode;
+      }
+
+      // Clear previous
+      this.editor.element.querySelectorAll('.inkwell-focus-active').forEach(el => {
+        el.classList.remove('inkwell-focus-active');
+      });
+
+      if (block && block.nodeType === Node.ELEMENT_NODE) {
+        block.classList.add('inkwell-focus-active');
+      }
+    },
+
+    _scrollToCurrentLine() {
+      if (!this.typewriterEnabled) return;
+
+      const sel = window.getSelection();
+      if (!sel.rangeCount || !sel.isCollapsed) return;
+
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      if (!rect || rect.height === 0) return;
+
+      const viewportH = window.innerHeight;
+      const targetY = viewportH / 2; // Center of viewport
+      const currentY = rect.top;
+      const diff = currentY - targetY;
+
+      if (Math.abs(diff) > 10) {
+        window.scrollBy({ top: diff, behavior: 'smooth' });
+      }
+    }
+  };
+
+  // ----------------------------------------------------------
+  // Slash Menu: / command palette
+  // ----------------------------------------------------------
+  const SlashMenu = {
+    editor: null,
+    menuEl: null,
+    isOpen: false,
+    query: '',
+    activeIndex: 0,
+    triggerNode: null,
+    triggerOffset: 0,
+    filteredItems: [],
+
+    commands: [
+      { id: 'paragraph',   cat: 'Basic Blocks', icon: '¶',  label: 'Paragraph',       desc: 'Plain text block',           shortcut: '' },
+      { id: 'h1',          cat: 'Basic Blocks', icon: 'H₁', label: 'Heading 1',       desc: 'Top-level heading',          shortcut: '⌘⇧1' },
+      { id: 'h2',          cat: 'Basic Blocks', icon: 'H₂', label: 'Heading 2',       desc: 'Section heading',            shortcut: '⌘⇧2' },
+      { id: 'h3',          cat: 'Basic Blocks', icon: 'H₃', label: 'Heading 3',       desc: 'Sub-section heading',        shortcut: '⌘⇧3' },
+      { id: 'h4',          cat: 'Basic Blocks', icon: 'H₄', label: 'Heading 4',       desc: 'Deep heading',               shortcut: '' },
+      { id: 'h5',          cat: 'Basic Blocks', icon: 'H₅', label: 'Heading 5',       desc: 'Minor heading',              shortcut: '' },
+      { id: 'h6',          cat: 'Basic Blocks', icon: 'H₆', label: 'Heading 6',       desc: 'Smallest heading',           shortcut: '' },
+      { id: 'bullet',      cat: 'Lists',        icon: '•',  label: 'Bulleted List',   desc: 'Unordered list',             shortcut: '⌘⇧8' },
+      { id: 'ordered',     cat: 'Lists',        icon: '1.', label: 'Numbered List',   desc: 'Ordered list',               shortcut: '⌘⇧9' },
+      { id: 'todo',        cat: 'Lists',        icon: '☐',  label: 'Task List',       desc: 'Checklist with checkboxes',  shortcut: '⌘⇧X' },
+      { id: 'blockquote',  cat: 'Blocks',       icon: '❝',  label: 'Blockquote',      desc: 'Quote / callout',            shortcut: '⌘⇧\'' },
+      { id: 'code',        cat: 'Blocks',       icon: '⟨⟩', label: 'Code Block',      desc: 'Fenced code with syntax HL', shortcut: '⌘⇧E' },
+      { id: 'hr',          cat: 'Blocks',       icon: '—',  label: 'Horizontal Rule',  desc: 'Divider line',              shortcut: '' },
+      { id: 'table',       cat: 'Blocks',       icon: '⊞',  label: 'Table',           desc: 'Insert a 3×3 table',         shortcut: '' },
+      { id: 'image',       cat: 'Media',        icon: '🖼', label: 'Image',           desc: 'Insert an image',            shortcut: '' },
+      { id: 'carousel',    cat: 'Media',        icon: '🎠', label: 'Carousel',        desc: 'Multi-image carousel',       shortcut: '' },
+      { id: 'link',        cat: 'Media',        icon: '🔗', label: 'Link',            desc: 'Insert a hyperlink',         shortcut: '⌘K' },
+      { id: 'math',        cat: 'Media',        icon: '∑',  label: 'Math Block',      desc: 'LaTeX math equation',        shortcut: '' },
+    ],
+
+    init(editor) {
+      this.editor = editor;
+      this.menuEl = document.createElement('div');
+      this.menuEl.className = 'inkwell-slash-menu';
+      this.menuEl.setAttribute('role', 'listbox');
+      document.body.appendChild(this.menuEl);
+
+      document.addEventListener('mousedown', (e) => {
+        if (this.isOpen && !this.menuEl.contains(e.target)) this.close();
+      });
+    },
+
+    onInput(e) {
+      const sel = window.getSelection();
+      if (!sel.rangeCount || !sel.isCollapsed) return;
+
+      const node = sel.anchorNode;
+      if (!node || node.nodeType !== Node.TEXT_NODE) {
+        if (this.isOpen) this.close();
+        return;
+      }
+
+      const text = node.textContent;
+      const offset = sel.anchorOffset;
+      const before = text.substring(0, offset);
+      const slashIdx = before.lastIndexOf('/');
+
+      if (slashIdx === -1) { if (this.isOpen) this.close(); return; }
+
+      // / must be at position 0 or after whitespace
+      const charBefore = slashIdx > 0 ? before[slashIdx - 1] : null;
+      if (charBefore !== null && charBefore !== ' ' && charBefore !== '\n' && charBefore !== '\t') {
+        if (this.isOpen) this.close();
+        return;
+      }
+
+      // Only trigger in blocks where / is at the start of content
+      const block = this._getParentBlock(node);
+      if (!block) { if (this.isOpen) this.close(); return; }
+      // Get block text excluding UI elements (drag handles, fold toggles)
+      let blockText = '';
+      block.childNodes.forEach(n => {
+        if (n.nodeType === Node.TEXT_NODE) blockText += n.textContent;
+        else if (n.nodeType === Node.ELEMENT_NODE &&
+                 !n.classList.contains('inkwell-drag-handle') &&
+                 !n.classList.contains('inkwell-fold-toggle')) {
+          blockText += n.textContent;
+        }
+      });
+      const slashPosInBlock = blockText.indexOf('/');
+      if (slashPosInBlock > 0 && blockText.substring(0, slashPosInBlock).trim() !== '') {
+        if (this.isOpen) this.close();
+        return;
+      }
+
+      this.query = before.substring(slashIdx + 1).toLowerCase();
+      this.triggerNode = node;
+      this.triggerOffset = slashIdx;
+      this._filter();
+      this.open();
+      this._positionMenu();
+    },
+
+    _filter() {
+      const q = this.query.trim();
+      if (!q) {
+        this.filteredItems = [...this.commands];
+      } else {
+        this.filteredItems = this.commands.filter(cmd =>
+          cmd.label.toLowerCase().includes(q) ||
+          cmd.desc.toLowerCase().includes(q) ||
+          cmd.id.includes(q)
+        );
+      }
+      this.activeIndex = 0;
+      this._render();
+    },
+
+    _render() {
+      if (this.filteredItems.length === 0) {
+        this.menuEl.innerHTML = '<div class="inkwell-slash-empty">No matching commands</div>';
+        return;
+      }
+      let html = '';
+      let lastCat = '';
+      this.filteredItems.forEach((item, idx) => {
+        if (item.cat !== lastCat) {
+          lastCat = item.cat;
+          html += '<div class="inkwell-slash-category">' + item.cat + '</div>';
+        }
+        const cls = idx === this.activeIndex ? ' active' : '';
+        html += '<div class="inkwell-slash-item' + cls + '" data-index="' + idx + '" role="option">'
+          + '<div class="inkwell-slash-icon">' + item.icon + '</div>'
+          + '<div class="inkwell-slash-info">'
+          +   '<div class="inkwell-slash-label">' + item.label + '</div>'
+          +   '<div class="inkwell-slash-desc">' + item.desc + '</div>'
+          + '</div>'
+          + (item.shortcut ? '<div class="inkwell-slash-shortcut">' + item.shortcut + '</div>' : '')
+          + '</div>';
+      });
+      this.menuEl.innerHTML = html;
+
+      this.menuEl.querySelectorAll('.inkwell-slash-item').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          this._execute(this.filteredItems[parseInt(el.dataset.index, 10)]);
+        });
+        el.addEventListener('mouseenter', () => {
+          this.activeIndex = parseInt(el.dataset.index, 10);
+          this._updateActive();
+        });
+      });
+    },
+
+    _updateActive() {
+      this.menuEl.querySelectorAll('.inkwell-slash-item').forEach(el => {
+        el.classList.toggle('active', parseInt(el.dataset.index, 10) === this.activeIndex);
+      });
+      const activeEl = this.menuEl.querySelector('.inkwell-slash-item.active');
+      if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    },
+
+    open() {
+      this.isOpen = true;
+      this.menuEl.classList.add('visible');
+    },
+
+    close() {
+      this.isOpen = false;
+      this.menuEl.classList.remove('visible');
+      this.query = '';
+      this.triggerNode = null;
+      this.activeIndex = 0;
+    },
+
+    _positionMenu() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0).cloneRange();
+      try {
+        range.setStart(this.triggerNode, this.triggerOffset);
+        range.setEnd(this.triggerNode, this.triggerOffset);
+      } catch(e) { return; }
+
+      const rect = range.getBoundingClientRect();
+      const menuH = this.menuEl.offsetHeight || 300;
+      let top = rect.bottom + 4;
+      let left = rect.left;
+
+      if (top + menuH > window.innerHeight - 10) top = rect.top - menuH - 4;
+      const menuW = this.menuEl.offsetWidth || 280;
+      if (left + menuW > window.innerWidth - 10) left = window.innerWidth - menuW - 10;
+      if (left < 10) left = 10;
+
+      this.menuEl.style.top = top + 'px';
+      this.menuEl.style.left = left + 'px';
+    },
+
+    handleKeyDown(e) {
+      if (!this.isOpen) return false;
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          if (this.filteredItems.length > 0) {
+            this.activeIndex = (this.activeIndex + 1) % this.filteredItems.length;
+            this._updateActive();
+          }
+          return true;
+        case 'ArrowUp':
+          e.preventDefault();
+          if (this.filteredItems.length > 0) {
+            this.activeIndex = (this.activeIndex - 1 + this.filteredItems.length) % this.filteredItems.length;
+            this._updateActive();
+          }
+          return true;
+        case 'Enter':
+        case 'Tab':
+          e.preventDefault();
+          if (this.filteredItems.length > 0) this._execute(this.filteredItems[this.activeIndex]);
+          return true;
+        case 'Escape':
+          e.preventDefault();
+          this.close();
+          return true;
+        case 'Backspace':
+          if (this.query === '') { setTimeout(() => this.close(), 0); }
+          return false;
+        default:
+          return false;
+      }
+    },
+
+    _execute(cmd) {
+      const block = this._getParentBlock(this.triggerNode);
+      if (block) block.textContent = '';
+      this.close();
+
+      const ed = this.editor;
+
+      switch (cmd.id) {
+        case 'paragraph': {
+          if (block && block.tagName !== 'P') {
+            const p = document.createElement('p'); p.innerHTML = '<br>';
+            block.parentNode.replaceChild(p, block);
+            this._setCursor(p, 0);
+          }
+          break;
+        }
+        case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6': {
+          const h = document.createElement('h' + cmd.id.charAt(1));
+          h.innerHTML = '<br>';
+          if (block) block.parentNode.replaceChild(h, block);
+          else ed.element.appendChild(h);
+          this._setCursor(h, 0);
+          break;
+        }
+        case 'bullet': {
+          const ul = document.createElement('ul');
+          const li = document.createElement('li'); li.innerHTML = '<br>';
+          ul.appendChild(li);
+          if (block) block.parentNode.replaceChild(ul, block);
+          else ed.element.appendChild(ul);
+          this._setCursor(li, 0);
+          break;
+        }
+        case 'ordered': {
+          const ol = document.createElement('ol');
+          const li = document.createElement('li'); li.innerHTML = '<br>';
+          ol.appendChild(li);
+          if (block) block.parentNode.replaceChild(ol, block);
+          else ed.element.appendChild(ol);
+          this._setCursor(li, 0);
+          break;
+        }
+        case 'todo': {
+          const tul = document.createElement('ul');
+          tul.setAttribute('data-type', 'taskList');
+          const tli = document.createElement('li');
+          tli.setAttribute('data-checked', 'false');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.addEventListener('change', function() {
+            tli.setAttribute('data-checked', this.checked ? 'true' : 'false');
+          });
+          const span = document.createElement('span'); span.innerHTML = '<br>';
+          tli.appendChild(cb); tli.appendChild(span);
+          tul.appendChild(tli);
+          if (block) block.parentNode.replaceChild(tul, block);
+          else ed.element.appendChild(tul);
+          this._setCursor(span, 0);
+          break;
+        }
+        case 'blockquote': {
+          const bq = document.createElement('blockquote');
+          const p = document.createElement('p'); p.innerHTML = '<br>';
+          bq.appendChild(p);
+          if (block) block.parentNode.replaceChild(bq, block);
+          else ed.element.appendChild(bq);
+          this._setCursor(p, 0);
+          break;
+        }
+        case 'code': {
+          const pre = document.createElement('pre');
+          const code = document.createElement('code');
+          code.textContent = '\n';
+          pre.appendChild(code);
+          if (block) block.parentNode.replaceChild(pre, block);
+          else ed.element.appendChild(pre);
+          this._setCursor(code, 0);
+          break;
+        }
+        case 'hr': {
+          const hr = document.createElement('hr');
+          const p = document.createElement('p'); p.innerHTML = '<br>';
+          if (block) {
+            block.parentNode.replaceChild(hr, block);
+            hr.parentNode.insertBefore(p, hr.nextSibling);
+          } else {
+            ed.element.appendChild(hr);
+            ed.element.appendChild(p);
+          }
+          this._setCursor(p, 0);
+          break;
+        }
+        case 'table': {
+          if (block) block.remove();
+          ed.insertTable(3, 3);
+          break;
+        }
+        case 'image': {
+          if (block) block.remove();
+          ed.execFormat('image');
+          break;
+        }
+        case 'carousel': {
+          if (block) block.remove();
+          ed.execFormat('carousel');
+          break;
+        }
+        case 'link': {
+          if (block) { block.innerHTML = '<br>'; this._setCursor(block, 0); }
+          ed.execFormat('link');
+          break;
+        }
+        case 'math': {
+          const pre = document.createElement('pre');
+          pre.setAttribute('data-language', 'math');
+          const code = document.createElement('code');
+          code.className = 'language-math';
+          code.textContent = '\n';
+          pre.appendChild(code);
+          if (block) block.parentNode.replaceChild(pre, block);
+          else ed.element.appendChild(pre);
+          this._setCursor(code, 0);
+          break;
+        }
+      }
+      ed.onContentChange();
+    },
+
+    _getParentBlock(node) {
+      const tags = ['P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','PRE','DIV','TD','TH'];
+      while (node && node !== this.editor.element) {
+        if (node.nodeType === Node.ELEMENT_NODE && tags.includes(node.tagName)) return node;
+        node = node.parentNode;
+      }
+      return null;
+    },
+
+    _setCursor(node, offset) {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      const target = (node.childNodes.length > 0 && offset === 0) ? (node.childNodes[0] || node) : node;
+      const off = (node.childNodes.length > 0 && offset === 0) ? 0 : offset;
+      range.setStart(target, off);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  };
+
+  // ----------------------------------------------------------
   // Editor Core
   // ----------------------------------------------------------
   const Editor = {
@@ -1801,13 +3076,35 @@
       // Initialize carousel manager
       CarouselManager.init(this);
 
+      // Initialize slash menu
+      SlashMenu.init(this);
+
+      // Initialize foldable headings
+      FoldableHeadings.init(this);
+
+      // Initialize drag & drop sorting
+      DragSort.init(this);
+
+      // Initialize outline panel
+      TableOfContents.init(this);
+
+      // Initialize word count status bar
+      WordCount.init(this);
+
+      // Initialize focus & typewriter mode
+      FocusMode.init(this);
+
       this.element.addEventListener('input', (e) => {
         this.onContentChange();
         // Run live conversion after content change is reported
         LiveConverter.onInput(e);
+        // Check for slash menu trigger
+        SlashMenu.onInput(e);
       });
 
       this.element.addEventListener('keydown', (e) => {
+        // Slash menu intercepts first
+        if (SlashMenu.handleKeyDown(e)) return;
         // Handle Enter for block-level conversions
         if (e.key === 'Enter' && !e.shiftKey) {
           if (LiveConverter.onEnter(e)) return;
@@ -1835,6 +3132,10 @@
         this.lastContent = md;
         this.postMessage('contentChange', { content: md });
       }
+      WordCount.update();
+      FoldableHeadings.refresh();
+      DragSort.refresh();
+      TableOfContents.scheduleRefresh();
     },
 
     loadMarkdown(markdown) {
@@ -1848,6 +3149,12 @@
       this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
       // Initialize carousels
       CarouselManager.initAll(this.element);
+      // Set up foldable heading toggles
+      FoldableHeadings.refresh();
+      // Set up drag handles
+      DragSort.refresh();
+      // Initial word count
+      WordCount.update();
     },
 
     // --- Syntax Highlighting ---
@@ -2309,7 +3616,9 @@
     scrollToHeading: (text, level) => {
       const headings = Editor.element.querySelectorAll('h' + level);
       for (const h of headings) {
-        if (h.textContent.trim() === text.trim()) {
+        if (h.textContent.replace(/[▶▼⋯]/g, '').trim() === text.trim()) {
+          // Auto-unfold if heading is hidden
+          FoldableHeadings.revealElement(h);
           h.scrollIntoView({ behavior: 'smooth', block: 'start' });
           const range = document.createRange();
           range.selectNodeContents(h);
@@ -2331,6 +3640,19 @@
     applyImage: (url, alt) => Editor.applyImage(url, alt),
     carouselReceiveImage: (url) => CarouselDialog.receiveLocalImage(url),
     insertTable: (r, c) => Editor.insertTable(r, c),
+    toggleFocusMode: () => FocusMode.toggleFocus(),
+    toggleTypewriterMode: () => FocusMode.toggleTypewriter(),
+    foldAll: () => {
+      Editor.element.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.classList.contains('inkwell-folded')) FoldableHeadings.fold(h);
+      });
+    },
+    unfoldAll: () => {
+      Editor.element.querySelectorAll('.inkwell-folded').forEach(h => {
+        FoldableHeadings.unfold(h);
+      });
+    },
+    toggleTOC: () => TableOfContents.toggle(),
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => Editor.init());
