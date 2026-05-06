@@ -66,9 +66,13 @@ class FindReplaceState: ObservableObject {
 
 struct EditorToolbarView: View {
     @ObservedObject var formatState: EditorFormatState
+    var zoomLevel: Int
     var onFormat: (String) -> Void
     var onFindReplace: () -> Void
     var onToggleTOC: () -> Void
+    var onZoomTo: (Int) -> Void
+    var onExportHTML: () -> Void
+    var onExportPDF: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -179,11 +183,54 @@ struct EditorToolbarView: View {
                 .padding(.horizontal, 12)
             }
 
-            Divider()
-                .frame(height: 16)
-                .padding(.horizontal, 2)
+            toolbarDivider
 
-            // Outline — fixed right, outside scroll
+            // Zoom — single menu
+            Menu {
+                ForEach([50, 75, 90, 100, 110, 125, 150, 175, 200], id: \.self) { pct in
+                    Button {
+                        onZoomTo(pct)
+                    } label: {
+                        HStack {
+                            Text("\(pct)%")
+                            if pct == zoomLevel {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "textformat.size")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 24)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Zoom (\(zoomLevel)%)")
+
+            toolbarDivider
+
+            // Export
+            Menu {
+                Button(action: onExportHTML) {
+                    Label("Export HTML…", systemImage: "doc.text")
+                }
+                Button(action: onExportPDF) {
+                    Label("Export PDF…", systemImage: "doc.richtext")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 24)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Export")
+
+            toolbarDivider
+
+            // Outline
             FormatBtn(icon: "list.bullet.indent", tip: "Outline", active: false) {
                 onToggleTOC()
             }

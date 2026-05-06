@@ -593,6 +593,11 @@
   /* ========== Typewriter Mode ========== */
   /* Handled via JS scroll, no special CSS needed */
 
+  /* ========== Zoom ========== */
+  /* Zoom works by setting html { font-size: X% }
+     Editor content inherits and scales naturally.
+     Status bar and UI elements use fixed px sizes and won't scale. */
+
   /* ========== Drag Handle ========== */
   .inkwell-drag-handle {
     position: absolute;
@@ -729,6 +734,8 @@
   <div class="inkwell-status-sep"></div>
   <div class="inkwell-status-btn" id="inkwell-btn-focus" title="Focus Mode">Focus</div>
   <div class="inkwell-status-btn" id="inkwell-btn-typewriter" title="Typewriter Mode">Typewriter</div>
+  <div class="inkwell-status-sep"></div>
+  <div class="inkwell-status-item" id="inkwell-stat-zoom">100%</div>
 </div>
 <div class="inkwell-toc-panel" id="inkwell-toc-panel"></div>
 
@@ -3653,6 +3660,35 @@
       });
     },
     toggleTOC: () => TableOfContents.toggle(),
+    // Zoom
+    setZoom: (level) => {
+      // Actual zoom is handled by Swift (webView.pageZoom)
+      // JS only updates the status bar display
+      const pct = Math.max(50, Math.min(200, level));
+      const zoomEl = document.getElementById('inkwell-stat-zoom');
+      if (zoomEl) zoomEl.textContent = pct + '%';
+    },
+    getZoom: () => {
+      const zoomEl = document.getElementById('inkwell-stat-zoom');
+      return zoomEl ? parseInt(zoomEl.textContent) : 100;
+    },
+    // Export
+    getHTMLForExport: () => {
+      const themeCSS = document.getElementById('theme-style').textContent;
+      const baseCSS = document.querySelector('style:not(#theme-style)').textContent;
+      const content = Editor.element.innerHTML;
+      // Strip UI elements from export
+      const temp = document.createElement('div');
+      temp.innerHTML = content;
+      temp.querySelectorAll('.inkwell-fold-toggle, .inkwell-drag-handle, .inkwell-slash-menu, .inkwell-toc-panel, .inkwell-status-bar').forEach(el => el.remove());
+      // Remove fold-hidden class so all content is visible
+      temp.querySelectorAll('.inkwell-fold-hidden').forEach(el => el.classList.remove('inkwell-fold-hidden'));
+      temp.querySelectorAll('.inkwell-folded').forEach(el => el.classList.remove('inkwell-folded'));
+      return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'
+        + baseCSS + '</style><style>' + themeCSS
+        + '</style></head><body><div class="editor-container"><div id="editor">'
+        + temp.innerHTML + '</div></div></body></html>';
+    },
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => Editor.init());

@@ -291,6 +291,85 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         webView.evaluateJavaScript("window.InkwellEditor.toggleTOC();")
     }
     
+    // MARK: - Zoom
+    
+    func setZoom(_ level: Int) {
+        let scale = CGFloat(max(50, min(200, level))) / 100.0
+        #if os(macOS)
+        webView.pageZoom = scale
+        #else
+        webView.evaluateJavaScript("document.body.style.webkitTextSizeAdjust = '\(level)%';")
+        #endif
+        // Update status bar in JS
+        webView.evaluateJavaScript("var z=document.getElementById('inkwell-stat-zoom');if(z)z.textContent='\(level)%';")
+    }
+    
+    // MARK: - Export
+    
+    func exportHTML(completion: @escaping (String?) -> Void) {
+        webView.evaluateJavaScript("window.InkwellEditor.getHTMLForExport();") { result, error in
+            completion(result as? String)
+        }
+    }
+    
+    // Retained during PDF export to prevent deallocation
+    private var pdfExportWebView: WKWebView?
+    private var pdfExportDelegate: PDFExportDelegate?
+    
+    func exportPDF(completion: @escaping (Data?) -> Void) {
+        exportHTML { [weak self] html in
+            guard let self = self, var html = html else {
+                completion(nil)
+                return
+            }
+            
+            // Inject print-optimized CSS + reset zoom
+            let printCSS = """
+            <style>
+            html { font-size: 100% !important; }
+            html, body { height: auto !important; overflow: visible !important; margin: 0; padding: 0; }
+            .editor-container { min-height: auto !important; padding: 0 !important; padding-bottom: 0 !important; }
+            #editor {
+                min-height: auto !important;
+                max-width: 100% !important;
+                padding: 20px 40px !important;
+                margin: 0 !important;
+                transform: none !important;
+            }
+            .inkwell-status-bar, .inkwell-toc-panel, .inkwell-slash-menu,
+            .inkwell-drag-handle, .inkwell-fold-toggle { display: none !important; }
+            pre { white-space: pre-wrap !important; word-wrap: break-word !important; }
+            img { max-width: 100% !important; height: auto !important; page-break-inside: avoid; }
+            table { page-break-inside: avoid; }
+            h1, h2, h3, h4, h5, h6 { page-break-after: avoid; }
+            </style>
+            """
+            html = html.replacingOccurrences(of: "</head>", with: printCSS + "</head>")
+            
+            DispatchQueue.main.async {
+                let pageWidth: CGFloat = 595.28  // A4 width in points
+                
+                let config = WKWebViewConfiguration()
+                let pdfView = WKWebView(frame: CGRect(x: 0, y: 0, width: pageWidth, height: 842), configuration: config)
+                #if os(macOS)
+                pdfView.setValue(false, forKey: "drawsBackground")
+                #endif
+                
+                let delegate = PDFExportDelegate(pageWidth: pageWidth) { [weak self] data in
+                    completion(data)
+                    self?.pdfExportWebView = nil
+                    self?.pdfExportDelegate = nil
+                }
+                
+                self.pdfExportWebView = pdfView
+                self.pdfExportDelegate = delegate
+                
+                pdfView.navigationDelegate = delegate
+                pdfView.loadHTMLString(html, baseURL: self.documentBaseURL)
+            }
+        }
+    }
+    
     // MARK: - Scroll to Heading (outline navigation)
     
     func scrollToHeading(title: String, level: Int) {
@@ -404,6 +483,10 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 UIApplication.shared.open(url)
                 #endif
             }
+            
+        case "zoomChanged":
+            // Sync zoom state from JS (e.g. after setZoom)
+            break
             
         default:
             break
@@ -599,3 +682,52 @@ extension EditorCoordinator: PHPickerViewControllerDelegate {
     }
 }
 #endif
+
+// MARK: - PDF Export Delegate
+
+class PDFExportDelegate: NSObject, WKNavigationDelegate {
+    let completion: (Data?) -> Void
+    let pageWidth: CGFloat
+    
+    init(pageWidth: CGFloat, completion: @escaping (Data?) -> Void) {
+        self.pageWidth = pageWidth
+        self.completion = completion
+    }
+    
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Step 1: Wait for initial render, then measure actual content height
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            
+            webView.evaluateJavaScript("document.body.scrollHeight") { [weak self] result, error in
+                guard let self = self else { return }
+                let contentHeight = (result as? CGFloat) ?? 842
+                
+                // Step 2: Resize webview to full content height so nothing is clipped
+                webView.frame = CGRect(x: 0, y: 0, width: self.pageWidth, height: max(contentHeight, 842))
+                
+                // Step 3: Wait for relayout after resize, then generate PDF
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    let pdfConfig = WKPDFConfiguration()
+                    // Don't set pdfConfig.rect — let it use the full webview content
+                    // WKWebView will automatically paginate into A4-ish pages
+                    
+                    webView.createPDF(configuration: pdfConfig) { result in
+                        switch result {
+                        case .success(let data):
+                            self.completion(data)
+                        case .failure(let error):
+                            print("[Inkwell] PDF export error: \(error)")
+                            self.completion(nil)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        print("[Inkwell] PDF webview load failed: \(error)")
+        completion(nil)
+    }
+}

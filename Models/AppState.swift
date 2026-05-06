@@ -2,7 +2,8 @@ import SwiftUI
 import Combine
 
 class AppState: ObservableObject {
-    @Published var currentDocument: MarkdownDocument?
+    @Published var openTabs: [MarkdownDocument] = []
+    @Published var activeTabId: UUID? = nil
     @Published var recentFiles: [FileItem] = []
     @Published var sidebarFiles: [FileItem] = []
     @Published var fileTree: [FileNode] = []
@@ -14,6 +15,15 @@ class AppState: ObservableObject {
     
     /// Set by sidebar outline tap, consumed by editor view to scroll
     @Published var scrollToOutline: OutlineItem? = nil
+    
+    /// The currently active document (computed from activeTabId)
+    var currentDocument: MarkdownDocument? {
+        guard let id = activeTabId else { return nil }
+        return openTabs.first { $0.id == id }
+    }
+    
+    /// Editor zoom level (50–200, default 100)
+    @Published var zoomLevel: Int = 100
     
     // MARK: - Theme State
     
@@ -46,12 +56,16 @@ class AppState: ObservableObject {
         self.currentThemeId = savedId
         loadCustomThemesFromDisk()
         applyTheme(id: savedId)
+        
+        // Restore saved zoom level
+        let savedZoom = UserDefaults.standard.integer(forKey: "editorZoomLevel")
+        self.zoomLevel = savedZoom > 0 ? savedZoom : 100
     }
     
     // MARK: - File Tree (hierarchical)
     
     func buildFileTree(from directory: URL) {
-        let fm = FileManager.default
+        _ = FileManager.default
         
         // Collect all .md base names at top level for attachment folder detection
         let topLevelMDNames = collectMDBaseNames(in: directory)
@@ -164,14 +178,70 @@ class AppState: ObservableObject {
     // MARK: - Document Operations
     
     func openFile(_ url: URL) {
+        // If already open in a tab, just switch to it
+        if let existing = openTabs.first(where: { $0.url == url }) {
+            activeTabId = existing.id
+            updateOutline(from: existing.content)
+            return
+        }
+        
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
-            currentDocument = MarkdownDocument(url: url, content: content)
+            let doc = MarkdownDocument(url: url, content: content)
+            openTabs.append(doc)
+            activeTabId = doc.id
             updateOutline(from: content)
             addToRecent(url)
         } catch {
             print("[Inkwell] Error opening file: \(error.localizedDescription)")
         }
+    }
+    
+    func closeTab(_ docId: UUID) {
+        guard let idx = openTabs.firstIndex(where: { $0.id == docId }) else { return }
+        
+        // Save if dirty before closing
+        let doc = openTabs[idx]
+        if doc.isDirty {
+            try? doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+        }
+        
+        openTabs.remove(at: idx)
+        
+        // Update active tab
+        if activeTabId == docId {
+            if openTabs.isEmpty {
+                activeTabId = nil
+            } else {
+                // Activate the nearest tab
+                let newIdx = min(idx, openTabs.count - 1)
+                activeTabId = openTabs[newIdx].id
+                if let newDoc = openTabs[safe: newIdx] {
+                    updateOutline(from: newDoc.content)
+                }
+            }
+        }
+    }
+    
+    func closeOtherTabs(except docId: UUID) {
+        let toClose = openTabs.filter { $0.id != docId }
+        for doc in toClose {
+            if doc.isDirty {
+                try? doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+            }
+        }
+        openTabs.removeAll { $0.id != docId }
+        activeTabId = docId
+    }
+    
+    func closeAllTabs() {
+        for doc in openTabs {
+            if doc.isDirty {
+                try? doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+            }
+        }
+        openTabs.removeAll()
+        activeTabId = nil
     }
     
     func saveCurrentDocument() {
@@ -218,6 +288,25 @@ class AppState: ObservableObject {
     
     func updateOutline(from markdown: String) {
         outlineItems = OutlineParser.parse(markdown)
+    }
+    
+    // MARK: - Zoom
+    
+    func setZoom(_ level: Int) {
+        zoomLevel = max(50, min(200, level))
+        UserDefaults.standard.set(zoomLevel, forKey: "editorZoomLevel")
+    }
+    
+    func zoomIn() {
+        setZoom(zoomLevel + 10)
+    }
+    
+    func zoomOut() {
+        setZoom(zoomLevel - 10)
+    }
+    
+    func zoomReset() {
+        setZoom(100)
     }
     
     // MARK: - Theme
@@ -342,5 +431,13 @@ class AppState: ObservableObject {
               let range = Range(match.range(at: 1), in: css)
         else { return nil }
         return String(css[range])
+    }
+}
+
+// MARK: - Safe Array Subscript
+
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
