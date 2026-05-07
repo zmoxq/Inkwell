@@ -162,7 +162,11 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         contentController.add(self, name: "inkwell")
         config.userContentController = contentController
         config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        
+
+        // Phase 3 PR 2: 注册 inkwell-asset:// scheme handler
+        // editor.html 通过 inkwell-asset:///<filename> 访问 Bundle 内 WebAssets/ 文件夹
+        config.setURLSchemeHandler(InkwellAssetSchemeHandler(), forURLScheme: "inkwell-asset")
+
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = self
         
@@ -460,6 +464,14 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 self?.findReplaceState?.matchCount = payload["count"] as? Int ?? 0
                 self?.findReplaceState?.currentMatch = payload["current"] as? Int ?? -1
             }
+            
+        case "extensionError":
+            // Phase 3 PR 1: extension 故障上报通道
+            let ext = payload["extension"] as? String ?? "unknown"
+            let method = payload["method"] as? String ?? "unknown"
+            let errorMsg = payload["error"] as? String ?? "unknown"
+            print("⚠️ [Extension:\(ext)] \(method) failed: \(errorMsg)")
+            // 未来可加：toast、写日志文件、统计上报
             
         case "requestLinkInput":
             // JS is asking for a link URL — show a native dialog

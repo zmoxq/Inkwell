@@ -1,0 +1,14 @@
+{
+  "$comment": "WebAssets 版本台账。Swift/JS 不读取此文件，仅供人查阅。每次更新资产时同步更新此文件。",
+  "assets": {
+    "mermaid.min.js": {
+      "version": "11.14.0",
+      "source": "npm:mermaid",
+      "license": "MIT",
+      "added": "2026-05-07",
+      "updated": "2026-05-07",
+      "size_bytes": 3164970,
+      "notes": "Phase 3 PR 2 引入。通过 inkwell-asset:///mermaid.min.js 加载。"
+    }
+  }
+}
