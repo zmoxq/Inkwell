@@ -7,6 +7,21 @@ A native WYSIWYG Markdown editor for macOS and iOS, inspired by [Typora](https:/
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
 
+## Status
+
+**Phase 3 — Extension Architecture** (in progress, May 2026)
+
+- ✅ Phase 1 — File tree / outline / theme system
+- ✅ Phase 2 — Toolbar / shortcuts / live rendering / highlights / tables
+- 🚧 Phase 3 — Extension architecture (PR 1 + 2 complete)
+	- ✅ ExtensionRegistry: BlockRenderer / BlockDecorator / InlineRenderer (three types)
+	- ✅ WebAssets: Bundle asset layer (`inkwell-asset://` URL scheme)
+	- ✅ Built-in extensions: highlight-code / highlight-mark / mermaid
+	- ⬜ PR 3 — KaTeX display math
+	- ⬜ PR 4 — Timeline (custom SVG)
+
+See `docs/PHASE_3_ARCHITECTURE.md` for details.
+
 ## Why Inkwell?
 
 Most Markdown editors are either Electron-based (heavy, non-native) or rely on split-pane preview (context-switching). Inkwell renders Markdown inline as you type — like Typora — but as a truly native app. The entire editing engine lives inside a single `editor.html` with zero npm dependencies. Swift handles file I/O, theming, and OS integration; JavaScript handles Markdown parsing, serialization, and the contentEditable surface.
@@ -45,25 +60,21 @@ Most Markdown editors are either Electron-based (heavy, non-native) or rely on s
 
 ## Architecture
 
-```
-┌──────────────────────────────┐
-│         SwiftUI Shell        │
-│  ContentView · SidebarView   │
-│  EditorToolbarView · AppState│
-├──────────────────────────────┤
-│    MarkdownEditorView.swift  │
-│   WKWebView + JS↔Swift Bridge│
-├──────────────────────────────┤
-│        editor.html           │
-│  Markdown Parser/Serializer  │
-│  LiveConverter · SlashMenu   │
-│  FoldableHeadings · DragSort │
-│  TableOfContents · WordCount │
-│  FocusMode · CarouselManager │
-└──────────────────────────────┘
-```
+### Architecture Overview
 
-**Key constraint:** Zero external dependencies. No npm packages, no Swift packages. The JS engine is a single self-contained HTML file. Code syntax highlighting uses highlight.js loaded from CDN.
+Inkwell is built on SwiftUI + WKWebView. SwiftUI handles file I/O, theming, and OS integration; the WKWebView embeds `editor.html` and handles all Markdown parsing, rendering, and serialization. The two sides communicate bidirectionally via `WKScriptMessageHandler`.
+
+**Phase 3 Extension Architecture** (current) lets all non-core rendering logic plug into editor.html through `ExtensionRegistry` without coupling to the editor core. Three extension types:
+
+| Type           | Responsibility                    | Current instance              |
+| -------------- | --------------------------------- | ----------------------------- |
+| BlockRenderer  | Takes over fenced block rendering | mermaid                       |
+| BlockDecorator | Decorates already-rendered DOM    | highlight-code (highlight.js) |
+| InlineRenderer | Inline text fragment replacement  | highlight-mark (`==text==`)   |
+
+**WebAssets asset layer** (introduced in PR 2): extension-dependent JS libraries are loaded from the app Bundle via the custom `inkwell-asset://` URL scheme. Drop asset files into `Inkwell/Resources/WebAssets/` and they're available. See `docs/WEBASSETS.md`.
+
+**Progress**: PR 1 (architecture + migration of existing features) and PR 2 (mermaid + WebAssets) are complete. Next up is PR 3 (KaTeX). Full design in `docs/PHASE_3_ARCHITECTURE.md`.
 
 ## Requirements
 
