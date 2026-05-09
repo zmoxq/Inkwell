@@ -8,8 +8,14 @@
 <!-- Highlight.js for code syntax highlighting -->
 <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-<!-- Mermaid: 通过 inkwell-asset:// scheme 从 app Bundle 的 WebAssets/ 加载 -->
-<script src="inkwell-asset:///mermaid.min.js"></script>
+<!-- Mermaid: 通过 inkwell-asset:// scheme 从 app Bundle 的 WebAssets/mermaid/ 加载 -->
+<script src="inkwell-asset:///mermaid/mermaid.min.js"></script>
+<!-- KaTeX (Phase 3 PR 3): 通过 inkwell-asset:// scheme 加载,放在 katex/ 子目录。
+     用同步 <script> 不要 async/defer,确保 BlockRenderer.render() 调用时 katex 已就绪。
+     CSS 内 url(fonts/...) 相对路径会自然指向 inkwell-asset:///katex/fonts/,
+     无需平铺字体或改 CSS。详见 PHASE_3_ARCHITECTURE.md 附录 D.5。 -->
+<link rel="stylesheet" href="inkwell-asset:///katex/katex.min.css">
+<script src="inkwell-asset:///katex/katex.min.js"></script>
 
 <style>
   /* Dark mode: swap to github-dark theme */
@@ -104,6 +110,31 @@
   .inkwell-block-renderer[data-renderer="mermaid"] svg {
     max-width: 100%;
     height: auto;
+  }
+
+  /* KaTeX display math 特定样式 (Phase 3 PR 3) */
+  .inkwell-block-renderer[data-renderer="katex-display"] .renderer-output {
+    text-align: center;
+    padding: 8px 12px;
+    overflow-x: auto;  /* 长公式可横向滚动 */
+  }
+  /* KaTeX 自带 .katex-display 类已是 block + center,不需要再覆盖。
+     主题切换通过 currentColor 自动继承,没有 hardcode 颜色规则。 */
+
+  /* display-math fallback (parser 阶段无 renderer / 未闭合) */
+  pre.inkwell-unrendered-math,
+  pre.inkwell-unclosed-math {
+    background: var(--code-bg, #f5f5f5);
+    border-left: 3px solid var(--border, #d0d0d0);
+    padding: 8px 12px;
+    margin: 1em 0;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 0.9em;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  pre.inkwell-unclosed-math {
+    border-left-color: #d97706;  /* 橙色提示这是未闭合的 */
   }
 
   /* ========== Table Enhanced Styles ========== */
@@ -1365,7 +1396,7 @@
         if (typeof mermaid === 'undefined') {
           ctx.setError(root, {
             type: 'runtime',
-            message: 'Mermaid library failed to load. Check inkwell-asset:///mermaid.min.js is reachable.'
+            message: 'Mermaid library failed to load. Check inkwell-asset:///mermaid/mermaid.min.js is reachable.'
           });
           return root;
         }
@@ -1422,6 +1453,75 @@
   })();
 
   // ----------------------------------------------------------
+  // 内置扩展：KaTeX display math (Phase 3 PR 3)
+  // ----------------------------------------------------------
+  // 同步渲染 —— 不用 runAsync。同步加载 KaTeX 库保证 render() 调用时已就绪。
+  // 主题切换不重渲染(rerenderOn: []),颜色靠 currentColor 继承,见附录 D.6。
+  (function registerKaTeXDisplay() {
+    if (typeof window.ExtensionRegistry === 'undefined') return;
+
+    ExtensionRegistry.registerBlock({
+      name: 'katex-display',
+      type: 'display-math',
+      editStyle: 'typora',
+      capabilities: { rerenderOn: [] },
+
+      match(block /*, ctx */) {
+        return block.type === 'display-math';
+      },
+
+      render(block, ctx) {
+        // raw 是完整含 $$ 定界符的原文(parser/_resolvePendingRenderers 已保证)
+        // 兜底:若 block.raw 缺失则现场拼回
+        const sourceMarkdown = block.raw || ('$$\n' + block.content + '\n$$');
+
+        const root = ctx.createBlockRoot({
+          renderer: 'katex-display',
+          sourceMarkdown: sourceMarkdown,
+          language: '',
+          editStyle: 'typora'
+        });
+
+        // 防御性 guard —— 同步 <script> 加载理论上保证已就绪,
+        // 但若有人改成 defer/async 出问题这里会立刻指向真正原因
+        if (typeof katex === 'undefined') {
+          ctx.setError(root, {
+            type: 'runtime',
+            message: 'KaTeX library not loaded. Check inkwell-asset:///katex/katex.min.js is reachable and not loaded with defer/async.'
+          });
+          return root;
+        }
+
+        // KaTeX 同步渲染。throwOnError: false 让 KaTeX 自己渲染红色错误框,
+        // 这样语法错的展示由 KaTeX 自带 UX 处理,不走 ctx.setError 路径
+        try {
+          const html = katex.renderToString(block.content, {
+            displayMode: true,
+            throwOnError: false,
+            output: 'html',  // 不输出 mathml,减少 DOM 体积;a11y 后续考虑
+            strict: 'ignore' // 不为常用扩展(\color etc.)弹警告
+          });
+          const out = root.querySelector('.renderer-output');
+          if (out) {
+            out.innerHTML = html;
+          }
+        } catch (err) {
+          // throwOnError: false 模式下 KaTeX 几乎不抛,但兜底处理一下
+          ctx.setError(root, {
+            type: 'runtime',
+            message: 'KaTeX render failed: ' + (err && err.message ? err.message : String(err))
+          });
+        }
+
+        return root;
+      }
+
+      // 不实现 serialize：core 直接读 data-source-b64 即可
+      // (跟 Mermaid 一样属于"完全由源码决定渲染"的扩展,见附录 D 七、Serialize 优先级)
+    });
+  })();
+
+  // ----------------------------------------------------------
   // Markdown Parser: Markdown → HTML
   // ----------------------------------------------------------
   const MarkdownParser = {
@@ -1460,6 +1560,7 @@
             // runAsync 等依赖 DOM 的能力工作不正常。
             const sourceB64 = btoa(unescape(encodeURIComponent(rawCode)));
             html += '<div class="inkwell-pending-renderer"' +
+                    ' data-pending-block-type="fenced-code"' +
                     ' data-pending-renderer="' + (renderer.name) + '"' +
                     ' data-pending-language="' + this.escapeAttr(lang) + '"' +
                     ' data-pending-source-b64="' + sourceB64 + '"></div>\n';
@@ -1470,7 +1571,60 @@
           continue;
         }
 
-        // Horizontal rule
+        // Display math block: 独占行 $$ ... $$
+        // Phase 3 PR 3 引入。规则详见 PHASE_3_ARCHITECTURE.md 附录 D.3。
+        // - 开/闭定界符必须是 trim 后等于 "$$" 的整行
+        // - 内容是开闭之间的所有行
+        // - 未闭合的开 $$ —— 整段当普通文本,不退回 markdown 二次 parse
+        // - inline $...$ 和段内 $$...$$ 不在范围,留 PR 5
+        if (line.trim() === '$$') {
+          // 先扫一遍找闭定界符
+          let endIdx = -1;
+          for (let j = i + 1; j < lines.length; j++) {
+            if (lines[j].trim() === '$$') {
+              endIdx = j;
+              break;
+            }
+          }
+          if (endIdx === -1) {
+            // 未闭合 —— 当普通文本逐行输出,不进入 markdown parse
+            // 用 pre 保留换行,escapeHtml 防止 HTML 注入
+            const escaped = this.escapeHtml(lines.slice(i).join('\n'));
+            html += '<pre class="inkwell-unclosed-math">' + escaped + '</pre>\n';
+            i = lines.length;
+            continue;
+          }
+          // 找到了配对的 $$
+          const contentLines = lines.slice(i + 1, endIdx);
+          const content = contentLines.join('\n');
+          // raw 是完整原文,含两个定界符
+          const raw = lines.slice(i, endIdx + 1).join('\n');
+
+          // 找 renderer
+          let renderer = null;
+          if (typeof ExtensionRegistry !== 'undefined') {
+            renderer = ExtensionRegistry.findBlockRenderer({
+              type: 'display-math',
+              content: content,
+              raw: raw
+            });
+          }
+          if (renderer) {
+            // raw(完整含 $$ 定界符)进 base64
+            const sourceB64 = btoa(unescape(encodeURIComponent(raw)));
+            html += '<div class="inkwell-pending-renderer"' +
+                    ' data-pending-block-type="display-math"' +
+                    ' data-pending-renderer="' + (renderer.name) + '"' +
+                    ' data-pending-language=""' +
+                    ' data-pending-source-b64="' + sourceB64 + '"></div>\n';
+          } else {
+            // 没有 renderer 接管 —— 当原文回显保留源码
+            html += '<pre class="inkwell-unrendered-math">' + this.escapeHtml(raw) + '</pre>\n';
+          }
+          i = endIdx + 1;
+          continue;
+        }
+
         if (line.match(/^(---|\*\*\*|___)\s*$/)) {
           html += '<hr>\n';
           i++;
@@ -1735,7 +1889,10 @@
           if (node.classList.contains('inkwell-block-renderer')) {
             if (typeof ExtensionRegistry !== 'undefined') {
               const md = ExtensionRegistry.serializeBlockNode(node);
-              // serializeBlockNode 返回的是围栏完整源码（如 ```mermaid\n...\n```）
+              // serializeBlockNode 返回的是完整 markdown 源码:
+              // - fenced renderer 返回围栏(如 ```mermaid\n...\n```)
+              // - display-math renderer 返回完整含定界符的 $$\n...\n$$
+              // 都是直接可写回 .md 的形式
               return (md || '') + '\n\n';
             }
             return '';
@@ -1891,6 +2048,10 @@
       // 注：用户实时输入 ```mermaid 等会先生成 <pre><code>。
       //     reload 后才会被 BlockRenderer 接管。
       //     "实时切换 BlockRenderer" 是 typora 风格 edit-mode 议题，留 future work。
+      //     PR 3 KaTeX display math ($$...$$) 同样不在 LiveConverter 接入,
+      //     用户敲完整段后保存/重载才能看到渲染。这是有意识的妥协,
+      //     等未来 LiveConvert PR 一次性给所有 BlockRenderer 设计统一 edit-mode。
+      //     详见 PHASE_3_ARCHITECTURE.md 附录 D.7。
       if (/^```/.test(text.trim())) {
         e.preventDefault();
         const lang = text.trim().slice(3).trim();
@@ -3894,11 +4055,13 @@
     },
 
     // 扫描 parser 输出的占位符，调用对应 BlockRenderer.render() 替换为实际渲染产物。
-    // 这条路径所有 BlockRenderer 共用（mermaid、未来的 KaTeX display、timeline 等）。
+    // 这条路径所有 BlockRenderer 共用（mermaid、KaTeX display、未来的 timeline 等）。
+    // PR 3 起：按 data-pending-block-type 派发,支持 fenced-code 和 display-math 两种 type。
     _resolvePendingRenderers() {
       if (typeof ExtensionRegistry === 'undefined') return;
       const placeholders = this.element.querySelectorAll('.inkwell-pending-renderer');
       placeholders.forEach(ph => {
+        const blockType = ph.getAttribute('data-pending-block-type') || 'fenced-code';
         const name = ph.getAttribute('data-pending-renderer');
         const lang = ph.getAttribute('data-pending-language') || '';
         const b64 = ph.getAttribute('data-pending-source-b64') || '';
@@ -3909,12 +4072,32 @@
           console.error('[Editor] failed to decode pending source', e);
         }
 
+        // 按 blockType 构造 block 对象
+        // - fenced-code: source = 围栏内容(裸 content),block 提供 language + content
+        // - display-math: source = 完整原文含 $$ 定界符,block 提供 content + raw
+        let block;
+        if (blockType === 'display-math') {
+          // 从 raw 里剥出 content(开闭 $$ 之间的所有行)
+          const innerLines = source.split('\n');
+          // 第一行是 $$,最后一行是 $$,中间是内容
+          // 防御性:若结构异常,fallback 到把整个 source 当 content
+          let content = source;
+          if (innerLines.length >= 2 &&
+              innerLines[0].trim() === '$$' &&
+              innerLines[innerLines.length - 1].trim() === '$$') {
+            content = innerLines.slice(1, -1).join('\n');
+          }
+          block = { type: 'display-math', content: content, raw: source };
+        } else {
+          // 默认 fenced-code 兼容
+          block = { type: 'fenced-code', language: lang, content: source };
+        }
+
         // 找 renderer
-        const block = { type: 'fenced-code', language: lang, content: source };
         const renderer = ExtensionRegistry.findBlockRenderer(block);
         if (!renderer || renderer.name !== name) {
-          // renderer 已不在注册列表（或同名扩展失败）—— fallback 到 plain code block
-          this._fallbackToPlainCodeBlock(ph, lang, source);
+          // renderer 已不在注册列表（或同名扩展失败）—— fallback
+          this._fallbackForPending(ph, blockType, lang, source);
           return;
         }
 
@@ -3924,9 +4107,23 @@
           ph.parentNode.replaceChild(root, ph);
         } else {
           // render 失败（safeCall 已上报）—— fallback
-          this._fallbackToPlainCodeBlock(ph, lang, source);
+          this._fallbackForPending(ph, blockType, lang, source);
         }
       });
+    },
+
+    // 占位符 fallback：按 blockType 选择合适的回显形式,保证源码不丢
+    _fallbackForPending(placeholderEl, blockType, lang, source) {
+      if (blockType === 'display-math') {
+        // source 已是完整含 $$ 原文,直接 pre 回显
+        const pre = document.createElement('pre');
+        pre.className = 'inkwell-unrendered-math';
+        pre.textContent = source;
+        placeholderEl.parentNode.replaceChild(pre, placeholderEl);
+      } else {
+        // 默认 fenced-code 路径
+        this._fallbackToPlainCodeBlock(placeholderEl, lang, source);
+      }
     },
 
     _fallbackToPlainCodeBlock(placeholderEl, lang, source) {
@@ -4022,6 +4219,11 @@
           } catch (_) {}
 
           const block = { type: 'fenced-code', language: lang, content: source };
+          // TODO(PR-3+): 这一段重渲染路径写死了 type='fenced-code' 并做了"剥围栏"处理。
+          // PR 3 KaTeX display-math 的 rerenderOn 是空数组,不会进入这条路径,所以暂不影响。
+          // 等第二个有 rerenderOn 的非 fenced-code block type 出现时再泛化:
+          //   - 改读 oldRoot 上的 data-block-type 字段(需要 createBlockRoot 一并支持)
+          //   - 按 type 派发不同的 block 对象构造 + content 提取逻辑
           // 注意：source 是完整 markdown（含围栏），但 block.content 应该是
           // 围栏内部的内容。findBlockRenderer/render 期望 content 为内部内容。
           // 处理：如果 source 以 ``` 开头则剥掉围栏
