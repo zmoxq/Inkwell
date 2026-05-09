@@ -1787,7 +1787,9 @@
       text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
       text = text.replace(/_(.+?)_/g, '<em>$1</em>');
       text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
-      text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+      // Inline code:内容必须 HTML-escape,否则 `<script>` `<style>` 等
+      // 字面量会让浏览器进入特殊解析模式吞掉之后的内容(<code> 不是 raw text 元素)
+      text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + this.escapeHtml(code) + '</code>');
       // Inline extensions（==highlight== 等）— PR 1 引入
       if (typeof ExtensionRegistry !== 'undefined') {
         text = ExtensionRegistry.applyInlineToHTML(text);

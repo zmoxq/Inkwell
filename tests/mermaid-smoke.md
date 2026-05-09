@@ -3,9 +3,10 @@
 > 用于每次更新 mermaid.min.js 版本后验证。打开此文件，确认每个图都正常渲染。
 > 任意一个图没渲染或显示错误 → 检查 Mermaid changelog 看是否 breaking change。
 
----
+|  |
+| :---: |
 
-## 1. Flowchart（最基本）
+## ​1. Flowchart（最基本）
 
 ```mermaid
 graph TD
@@ -15,7 +16,8 @@ graph TD
   D --> B
 ```
 
----
+|  |
+| :---: |
 
 ## 2. Sequence Diagram
 
@@ -30,7 +32,8 @@ sequenceDiagram
   App-->>User: Saved!
 ```
 
----
+|  |
+| :---: |
 
 ## 3. Gantt Chart
 
@@ -45,7 +48,8 @@ gantt
   烟雾测试         :2026-05-08, 1d
 ```
 
----
+|  |
+| :---: |
 
 ## 4. State Diagram
 
@@ -59,7 +63,8 @@ stateDiagram-v2
   Rejected --> Draft: revise()
 ```
 
----
+|  |
+| :---: |
 
 ## 5. Class Diagram
 
@@ -78,7 +83,8 @@ classDiagram
   ExtensionRegistry --> InlineRenderer
 ```
 
----
+|  |
+| :---: |
 
 ## 6. Pie Chart
 
@@ -89,7 +95,8 @@ pie title PR 2 时间分布
   "测试与文档" : 30
 ```
 
----
+|  |
+| :---: |
 
 ## 7. 故意的语法错（应显示 syntax error，不是 runtime error）
 
@@ -101,9 +108,11 @@ graph TD
 
 期望：黄色（syntax）错误框，不是红色（runtime）错误框。
 
----
+|  |
+| :---: |
 
 ## 8. 主题切换测试
 
 切换 macOS 系统主题（System Settings → Appearance → Dark/Light），
+
 上面所有图表应该立即重新渲染为对应主题色。
