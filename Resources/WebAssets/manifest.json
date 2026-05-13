@@ -62,6 +62,21 @@
         "inkwell-asset:///katex/katex.min.css"
       ],
       "notes": "Phase 3 PR 3 引入。整个 katex/ 子目录直接从 npm 包 katex@0.16.11 的 dist/ 复制即可,CSS 相对路径天然对。"
+    },
+    "lightweight-charts": {
+      "version": "5.2.0",
+      "source": "github:tradingview/lightweight-charts releases",
+      "license": "Apache-2.0 (要求 attribution: 'powered by TradingView' 链接,见 README/Acknowledgments)",
+      "added": "2026-05-10",
+      "updated": "2026-05-10",
+      "files": {
+        "lightweight-charts.standalone.production.js": {
+          "size_bytes": null,
+          "notes": "TradingView 官方 standalone 构建,UMD/IIFE 形式,暴露全局 LightweightCharts。通过 <script> 同步加载,不要 defer/async,确保 BlockRenderer.render() 调用时已就绪。"
+        }
+      },
+      "loaded_via": "inkwell-asset:///lightweight-charts/lightweight-charts.standalone.production.js",
+      "notes": "Phase 3 PR 4' 引入。Stock chart 扩展使用。standalone 版本无 npm 依赖,从 GitHub release 直接下载放进 lightweight-charts/ 子目录。Apache-2.0 license 要求 attribution——在 README/Acknowledgments 落地。"
     }
   }
 }

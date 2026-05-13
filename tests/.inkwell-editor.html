@@ -16,6 +16,10 @@
      无需平铺字体或改 CSS。详见 PHASE_3_ARCHITECTURE.md 附录 D.5。 -->
 <link rel="stylesheet" href="inkwell-asset:///katex/katex.min.css">
 <script src="inkwell-asset:///katex/katex.min.js"></script>
+<!-- lightweight-charts (Phase 3 PR 4'): TradingView 官方 standalone 构建,Apache 2.0。
+     从 GitHub release 下载放进 WebAssets/lightweight-charts/。
+     用同步 <script>,不要 async/defer,确保 BlockRenderer.render() 调用时已就绪。 -->
+<script src="inkwell-asset:///lightweight-charts/lightweight-charts.standalone.production.js"></script>
 
 <style>
   /* Dark mode: swap to github-dark theme */
@@ -120,6 +124,39 @@
   }
   /* KaTeX 自带 .katex-display 类已是 block + center,不需要再覆盖。
      主题切换通过 currentColor 自动继承,没有 hardcode 颜色规则。 */
+
+  /* Stock chart 特定样式 (Phase 3 PR 4') */
+  .inkwell-block-renderer[data-renderer="stock-chart"] .renderer-output {
+    padding: 8px 0;
+  }
+  .inkwell-block-renderer[data-renderer="stock-chart"] .stock-chart-title {
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    padding: 4px 12px 8px;
+    color: inherit;
+    opacity: 0.85;
+  }
+  .inkwell-block-renderer[data-renderer="stock-chart"] .stock-chart-canvas-host {
+    /* lightweight-charts 注入 canvas 的容器。它需要明确高度,
+       由 renderer 在创建实例时把 config.height 写到 element.style.height
+       
+       overflow: visible 显式声明 — 防止某些 WebView 配置或祖先样式
+       让默认行为变 hidden,从而裁掉 chart 底部的 time scale。
+       min-height: 防止 config.height 被错配置为极小值时整个图崩坏。 */
+    width: 100%;
+    box-sizing: border-box;
+    overflow: visible;
+    min-height: 260px;
+  }
+  /* Diagnostic note: 若解析时跳过了 Yahoo 事件行,显示一条小提示在图表下方 */
+  .inkwell-block-renderer[data-renderer="stock-chart"] .stock-chart-note {
+    font-size: 11px;
+    color: rgba(128,128,128,0.7);
+    text-align: center;
+    padding: 4px 12px 0;
+    font-style: italic;
+  }
 
   /* display-math fallback (parser 阶段无 renderer / 未闭合) */
   pre.inkwell-unrendered-math,
@@ -1521,6 +1558,866 @@
     });
   })();
 
+  // =============================================================================
+  // 内置扩展:stock-chart (Phase 3 PR 4')
+  // =============================================================================
+  // ```stock fenced block + 本地 CSV/JSON 数据文件 → lightweight-charts 蜡烛图。
+  // 数据快照渲染,零网络。详见 PHASE_3_ARCHITECTURE.md 附录 D。
+  //
+  // 内部 closure 包含:
+  //   - parsers (从 d1-parsers/parsers.js 嵌入,SOURCE OF TRUTH 是该文件 + parsers.test.js)
+  //   - readLocalFile bridge (D2 mock,D3 替换为真 Swift handler)
+  //   - chart 渲染逻辑 (lightweight-charts 集成)
+  //   - registerBlock 调用
+  //
+  // ⚠️ parsers 段与 d1-parsers/parsers.js 必须保持同步。修改请双向更新并跑 Node 测试。
+  // ----------------------------------------------------------
+  (function registerStockChart() {
+    if (typeof window.ExtensionRegistry === 'undefined') return;
+
+    // ---------------------------------------------------------------------------
+    // 1. Parsers (嵌入版,SOURCE OF TRUTH: d1-parsers/parsers.js)
+    // ---------------------------------------------------------------------------
+
+    class StockConfigError extends Error {
+      constructor(message, opts = {}) {
+        super(message);
+        this.name = 'StockConfigError';
+        if (opts.line != null) this.line = opts.line;
+        if (opts.field != null) this.field = opts.field;
+      }
+    }
+    class StockDataParseError extends Error {
+      constructor(message, opts = {}) {
+        super(message);
+        this.name = 'StockDataParseError';
+        if (opts.line != null) this.line = opts.line;
+        if (opts.column != null) this.column = opts.column;
+      }
+    }
+    class StockDataFormatError extends Error {
+      constructor(message) {
+        super(message);
+        this.name = 'StockDataFormatError';
+      }
+    }
+
+    function stripBOM(text) {
+      if (typeof text !== 'string') return text;
+      if (text.charCodeAt(0) === 0xFEFF) return text.slice(1);
+      return text;
+    }
+
+    function parseLooseNumber(s) {
+      if (s == null) return NaN;
+      if (typeof s === 'number') return s;
+      const trimmed = String(s).trim();
+      if (trimmed === '') return NaN;
+      const stripped = trimmed.replace(/,/g, '');
+      const n = Number(stripped);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    const MONTH_ABBREV = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+
+    function isValidYMD(y, m, d) {
+      if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+      if (y < 1900 || y > 2200) return false;
+      if (m < 1 || m > 12) return false;
+      if (d < 1 || d > 31) return false;
+      const date = new Date(Date.UTC(y, m - 1, d));
+      return date.getUTCFullYear() === y &&
+             date.getUTCMonth() === m - 1 &&
+             date.getUTCDate() === d;
+    }
+
+    function parseLooseDate(s) {
+      if (s == null) return null;
+      const str = String(s).trim();
+      if (str === '') return null;
+
+      let m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) {
+        const yyyy = m[1], mm = m[2], dd = m[3];
+        if (isValidYMD(+yyyy, +mm, +dd)) return `${yyyy}-${mm}-${dd}`;
+        return null;
+      }
+
+      m = str.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2}|\d{4})$/);
+      if (m) {
+        const dd = m[1].padStart(2, '0');
+        const monKey = m[2].toLowerCase();
+        const mm = MONTH_ABBREV[monKey];
+        if (!mm) return null;
+        let yyyy = m[3];
+        if (yyyy.length === 2) {
+          const n = parseInt(yyyy, 10);
+          yyyy = (n < 80 ? '20' : '19') + yyyy;
+        }
+        if (isValidYMD(+yyyy, +mm, +dd)) return `${yyyy}-${mm}-${dd}`;
+        return null;
+      }
+
+      m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (m) {
+        const mm = m[1].padStart(2, '0');
+        const dd = m[2].padStart(2, '0');
+        const yyyy = m[3];
+        if (isValidYMD(+yyyy, +mm, +dd)) return `${yyyy}-${mm}-${dd}`;
+        return null;
+      }
+
+      return null;
+    }
+
+    const VALID_INDICATORS = ['volume', 'ma20', 'ma50', 'ma200'];
+    const VALID_TYPES = ['candlestick', 'line', 'area'];
+
+    function coerceScalar(s) {
+      if (s === '') return '';
+      if ((s.startsWith('"') && s.endsWith('"')) ||
+          (s.startsWith("'") && s.endsWith("'"))) {
+        return s.slice(1, -1);
+      }
+      if (s === 'true') return true;
+      if (s === 'false') return false;
+      if (/^-?\d+(\.\d+)?$/.test(s)) {
+        const n = Number(s);
+        if (Number.isFinite(n)) return n;
+      }
+      return s;
+    }
+
+    function validateConfig(cfg) {
+      if (!cfg.file || typeof cfg.file !== 'string') {
+        throw new StockConfigError('Missing required field: file', { field: 'file' });
+      }
+      if (cfg.type == null) {
+        cfg.type = 'candlestick';
+      } else if (typeof cfg.type !== 'string' || !VALID_TYPES.includes(cfg.type)) {
+        throw new StockConfigError(
+          `Invalid type: "${cfg.type}". Must be one of: ${VALID_TYPES.join(', ')}`,
+          { field: 'type' }
+        );
+      }
+      if (cfg.title != null && typeof cfg.title !== 'string') {
+        cfg.title = String(cfg.title);
+      }
+      if (cfg.indicators == null) {
+        cfg.indicators = [];
+      } else if (!Array.isArray(cfg.indicators)) {
+        throw new StockConfigError('indicators must be a list', { field: 'indicators' });
+      } else {
+        for (const ind of cfg.indicators) {
+          if (typeof ind !== 'string' || !VALID_INDICATORS.includes(ind)) {
+            throw new StockConfigError(
+              `Invalid indicator: "${ind}". Supported: ${VALID_INDICATORS.join(', ')}`,
+              { field: 'indicators' }
+            );
+          }
+        }
+      }
+      if (cfg.height == null) {
+        cfg.height = 400;
+      } else if (!Number.isFinite(cfg.height) || cfg.height <= 0 || cfg.height > 10000) {
+        throw new StockConfigError(
+          `Invalid height: "${cfg.height}". Must be a positive number ≤ 10000.`,
+          { field: 'height' }
+        );
+      }
+      return cfg;
+    }
+
+    function parseStockConfig(text) {
+      text = stripBOM(text || '');
+      const lines = text.split(/\r\n|\r|\n/);
+      const result = {};
+      let i = 0;
+      while (i < lines.length) {
+        const lineNo = i + 1;
+        const raw = lines[i];
+        const trimmed = raw.trim();
+        if (trimmed === '' || trimmed.startsWith('#')) { i++; continue; }
+        if (raw.length > 0 && /^\s/.test(raw)) {
+          throw new StockConfigError(`Unexpected indentation at line ${lineNo}`, { line: lineNo });
+        }
+        if (trimmed.startsWith('-')) {
+          throw new StockConfigError(`List item without a parent key at line ${lineNo}`, { line: lineNo });
+        }
+        const m = trimmed.match(/^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/);
+        if (!m) {
+          throw new StockConfigError(`Invalid syntax at line ${lineNo}: expected "key: value"`, { line: lineNo });
+        }
+        const key = m[1];
+        const rest = m[2];
+        if (rest === '') {
+          const items = [];
+          i++;
+          while (i < lines.length) {
+            const itemRaw = lines[i];
+            const itemTrim = itemRaw.trim();
+            if (itemTrim === '' || itemTrim.startsWith('#')) { i++; continue; }
+            if (!/^\s+-\s+/.test(itemRaw) && !/^\s+-$/.test(itemRaw)) break;
+            const itemMatch = itemRaw.match(/^\s+-\s+(.*)$/) || itemRaw.match(/^\s+-\s*$/);
+            if (!itemMatch) break;
+            const itemValue = (itemMatch[1] || '').trim();
+            items.push(coerceScalar(itemValue));
+            i++;
+          }
+          result[key] = items;
+          continue;
+        }
+        result[key] = coerceScalar(rest);
+        i++;
+      }
+      return validateConfig(result);
+    }
+
+    const YAHOO_EVENT_KEYWORDS = /\b(dividend|split)\b/i;
+
+    function normalizeWhitespace(s) {
+      if (s == null) return '';
+      return String(s).replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ').trim();
+    }
+
+    function isYahooEventRow(cells, colIndex) {
+      for (const col of ['open', 'high', 'low', 'close']) {
+        const raw = cells[colIndex[col]];
+        if (raw != null && raw !== '' && Number.isFinite(parseLooseNumber(raw))) {
+          return false;
+        }
+      }
+      for (const cell of cells) {
+        if (cell == null) continue;
+        const norm = normalizeWhitespace(cell);
+        if (YAHOO_EVENT_KEYWORDS.test(norm)) return true;
+      }
+      return false;
+    }
+
+    function splitCSVLines(text) {
+      const lines = [];
+      let current = '';
+      let inQuote = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"') {
+          if (inQuote && text[i + 1] === '"') { current += '""'; i++; }
+          else { current += '"'; inQuote = !inQuote; }
+          continue;
+        }
+        if (!inQuote && (ch === '\n' || ch === '\r')) {
+          if (ch === '\r' && text[i + 1] === '\n') i++;
+          lines.push(current);
+          current = '';
+          continue;
+        }
+        current += ch;
+      }
+      if (current !== '') lines.push(current);
+      return lines;
+    }
+
+    function parseCSVRow(line, lineNo) {
+      const cells = [];
+      let cur = '';
+      let inQuote = false;
+      let i = 0;
+      while (i < line.length) {
+        const ch = line[i];
+        if (inQuote) {
+          if (ch === '"') {
+            if (line[i + 1] === '"') { cur += '"'; i += 2; continue; }
+            inQuote = false; i++; continue;
+          }
+          cur += ch; i++; continue;
+        }
+        if (ch === '"') {
+          if (cur === '') { inQuote = true; i++; continue; }
+          cur += ch; i++; continue;
+        }
+        if (ch === ',') { cells.push(cur); cur = ''; i++; continue; }
+        cur += ch; i++;
+      }
+      if (inQuote) {
+        throw new StockDataParseError(`Line ${lineNo}: unterminated quoted field`, { line: lineNo });
+      }
+      cells.push(cur);
+      return cells;
+    }
+
+    function parseStockCSV(text) {
+      text = stripBOM(text || '');
+      if (text.trim() === '') throw new StockDataParseError('CSV is empty');
+      const lines = splitCSVLines(text);
+      if (lines.length === 0) throw new StockDataParseError('CSV has no rows');
+
+      const headerCells = parseCSVRow(lines[0], 1);
+      const colIndex = {};
+      headerCells.forEach((cell, idx) => {
+        const norm = cell.trim().toLowerCase();
+        colIndex[norm] = idx;
+      });
+
+      const required = ['date', 'open', 'high', 'low', 'close'];
+      for (const col of required) {
+        if (colIndex[col] == null) {
+          throw new StockDataParseError(
+            `CSV missing required column: "${col}". Found: ${Object.keys(colIndex).join(', ')}`,
+            { line: 1, column: col }
+          );
+        }
+      }
+      const hasVolume = colIndex['volume'] != null;
+
+      const rows = [];
+      const skippedEventLines = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.trim() === '') continue;
+        const lineNo = i + 1;
+        const cells = parseCSVRow(line, lineNo);
+
+        const dateCell = cells[colIndex['date']];
+        const time = parseLooseDate(dateCell);
+        if (time == null) {
+          throw new StockDataParseError(
+            `Line ${lineNo}: cannot parse date "${dateCell}". Accepted formats: YYYY-MM-DD, DD-Mon-YY, MM/DD/YYYY.`,
+            { line: lineNo, column: 'date' }
+          );
+        }
+
+        if (isYahooEventRow(cells, colIndex)) {
+          skippedEventLines.push({ line: lineNo, time });
+          continue;
+        }
+
+        const row = { time };
+        for (const col of ['open', 'high', 'low', 'close']) {
+          const raw = cells[colIndex[col]];
+          const n = parseLooseNumber(raw);
+          if (!Number.isFinite(n)) {
+            throw new StockDataParseError(
+              `Line ${lineNo}: ${col} is not a number ("${raw}")`,
+              { line: lineNo, column: col }
+            );
+          }
+          row[col] = n;
+        }
+        if (hasVolume) {
+          const raw = cells[colIndex['volume']];
+          if (raw != null && raw.trim() !== '') {
+            const n = parseLooseNumber(raw);
+            if (!Number.isFinite(n)) {
+              throw new StockDataParseError(
+                `Line ${lineNo}: volume is not a number ("${raw}")`,
+                { line: lineNo, column: 'volume' }
+              );
+            }
+            row.volume = n;
+          }
+        }
+        rows.push(row);
+      }
+
+      if (rows.length === 0) throw new StockDataParseError('CSV has header but no data rows');
+      rows.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i].time === rows[i - 1].time) {
+          throw new StockDataParseError(`Duplicate date in data: ${rows[i].time}`, { column: 'date' });
+        }
+      }
+      // 把跳过的事件行附在 rows 上,renderer 可读取后展示提示
+      rows._skippedEventLines = skippedEventLines;
+      return rows;
+    }
+
+    function parseStockJSON(text) {
+      text = stripBOM(text || '');
+      let raw;
+      try { raw = JSON.parse(text); }
+      catch (e) { throw new StockDataParseError(`JSON parse failed: ${e.message}`); }
+      if (!Array.isArray(raw)) throw new StockDataParseError('JSON root must be an array of OHLCV objects');
+      if (raw.length === 0) throw new StockDataParseError('JSON array is empty');
+
+      const rows = [];
+      raw.forEach((obj, idx) => {
+        const itemNo = idx + 1;
+        if (obj == null || typeof obj !== 'object' || Array.isArray(obj)) {
+          throw new StockDataParseError(
+            `Item ${itemNo}: expected object, got ${Array.isArray(obj) ? 'array' : typeof obj}`
+          );
+        }
+        const dateRaw = obj.date != null ? obj.date : (obj.Date != null ? obj.Date : null);
+        if (dateRaw == null) throw new StockDataParseError(`Item ${itemNo}: missing field "date"`);
+        const time = parseLooseDate(dateRaw);
+        if (time == null) throw new StockDataParseError(`Item ${itemNo}: cannot parse date "${dateRaw}"`);
+
+        const row = { time };
+        for (const col of ['open', 'high', 'low', 'close']) {
+          let v = obj[col];
+          if (v == null) v = obj[col[0].toUpperCase() + col.slice(1)];
+          if (v == null) throw new StockDataParseError(`Item ${itemNo}: missing field "${col}"`);
+          const n = parseLooseNumber(v);
+          if (!Number.isFinite(n)) throw new StockDataParseError(`Item ${itemNo}: ${col} is not a number ("${v}")`);
+          row[col] = n;
+        }
+        let v = obj.volume;
+        if (v == null) v = obj.Volume;
+        if (v != null && v !== '') {
+          const n = parseLooseNumber(v);
+          if (!Number.isFinite(n)) throw new StockDataParseError(`Item ${itemNo}: volume is not a number ("${v}")`);
+          row.volume = n;
+        }
+        rows.push(row);
+      });
+
+      rows.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i].time === rows[i - 1].time) {
+          throw new StockDataParseError(`Duplicate date in data: ${rows[i].time}`);
+        }
+      }
+      rows._skippedEventLines = [];
+      return rows;
+    }
+
+    function selectDataParser(filePath) {
+      if (typeof filePath !== 'string') {
+        throw new StockDataFormatError('file path must be a string');
+      }
+      const lower = filePath.toLowerCase();
+      if (lower.endsWith('.csv')) return parseStockCSV;
+      if (lower.endsWith('.json')) return parseStockJSON;
+      throw new StockDataFormatError(
+        `Unsupported file extension: "${filePath}". Expected .csv or .json.`
+      );
+    }
+
+    // ---------------------------------------------------------------------------
+    // 2. readLocalFile bridge (Phase 3 PR 4' D3)
+    // ---------------------------------------------------------------------------
+    // 走统一的 inkwell 通道(type='readLocalFile')。这与 Inkwell 现有所有
+    // JS→Swift 消息(editorReady/contentChange/save/extensionError 等)使用
+    // 同一 WKScriptMessageHandler — Swift 端按 type 字段分发。
+    //
+    // Swift 端回调通过 evaluateJavaScript 调 window.inkwell._onLocalFileResponse
+    // 完成 Promise resolve/reject。
+    // ---------------------------------------------------------------------------
+
+    const _pendingFileReads = new Map();
+    let _fileRequestIdCounter = 0;
+
+    // 全局 callback,由 Swift 端 evaluateJavaScript 调用回填结果。结构:
+    //   window.inkwell._onLocalFileResponse(requestId, { success, content, error })
+    if (!window.inkwell) window.inkwell = {};
+    window.inkwell._onLocalFileResponse = function (requestId, response) {
+      const pending = _pendingFileReads.get(requestId);
+      if (!pending) return;
+      _pendingFileReads.delete(requestId);
+      if (response && response.success) {
+        pending.resolve(response.content);
+      } else {
+        const err = new Error(response && response.error && response.error.message
+                              ? response.error.message
+                              : 'File read failed');
+        if (response && response.error && response.error.code) {
+          err.code = response.error.code;
+        }
+        pending.reject(err);
+      }
+    };
+
+    window.inkwell.readLocalFile = function (relativePath, signal) {
+      return new Promise((resolve, reject) => {
+        // 检测统一 inkwell 通道是否就绪
+        const handler = (typeof webkit !== 'undefined' &&
+                        webkit.messageHandlers &&
+                        webkit.messageHandlers.inkwell) || null;
+        if (!handler) {
+          const err = new Error(
+            'inkwell bridge unavailable. This typically means you are testing ' +
+            'editor.html outside the Inkwell app (e.g. in a plain browser). ' +
+            'Stock charts only work inside Inkwell.'
+          );
+          err.code = 'BRIDGE_NOT_READY';
+          reject(err);
+          return;
+        }
+
+        const requestId = 'rf-' + (++_fileRequestIdCounter) + '-' + Date.now();
+        _pendingFileReads.set(requestId, { resolve, reject });
+
+        if (signal) {
+          if (signal.aborted) {
+            _pendingFileReads.delete(requestId);
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          signal.addEventListener('abort', () => {
+            if (_pendingFileReads.has(requestId)) {
+              _pendingFileReads.delete(requestId);
+              reject(new DOMException('Aborted', 'AbortError'));
+            }
+          });
+        }
+
+        try {
+          // 走统一 inkwell 通道,Swift 端按 type='readLocalFile' 分发
+          handler.postMessage(JSON.stringify({
+            type: 'readLocalFile',
+            data: { relativePath: relativePath, requestId: requestId }
+          }));
+        } catch (e) {
+          _pendingFileReads.delete(requestId);
+          reject(e);
+        }
+      });
+    };
+
+    // ---------------------------------------------------------------------------
+    // 3. Chart rendering
+    // ---------------------------------------------------------------------------
+
+    // 主题色:不依赖 ctx.theme.colors (当前为空),只用 isDark 派生几个核心色。
+    // 这与 mermaid (theme: 'dark'|'default') 和 KaTeX (currentColor 继承) 的处理风格一致。
+    function getChartTheme(isDark) {
+      if (isDark) {
+        return {
+          background: 'transparent',     // 让笔记的暗色背景透出
+          textColor: '#d4d4d4',
+          gridColor: 'rgba(255,255,255,0.07)',
+          borderColor: 'rgba(255,255,255,0.15)',
+          upColor: '#26a69a',            // 涨绿
+          downColor: '#ef5350',          // 跌红
+          volumeUp: 'rgba(38,166,154,0.5)',
+          volumeDown: 'rgba(239,83,80,0.5)',
+          ma20: '#42a5f5',
+          ma50: '#ffa726',
+          ma200: '#ab47bc'
+        };
+      }
+      return {
+        background: 'transparent',
+        textColor: '#333333',
+        gridColor: 'rgba(0,0,0,0.06)',
+        borderColor: 'rgba(0,0,0,0.15)',
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        volumeUp: 'rgba(38,166,154,0.4)',
+        volumeDown: 'rgba(239,83,80,0.4)',
+        ma20: '#1976d2',
+        ma50: '#f57c00',
+        ma200: '#7b1fa2'
+      };
+    }
+
+    // 计算简单移动平均线。返回 [{time, value}, ...] 跳过前 period-1 个点。
+    function computeSMA(rows, period) {
+      const out = [];
+      let sum = 0;
+      for (let i = 0; i < rows.length; i++) {
+        sum += rows[i].close;
+        if (i >= period) sum -= rows[i - period].close;
+        if (i >= period - 1) {
+          out.push({ time: rows[i].time, value: sum / period });
+        }
+      }
+      return out;
+    }
+
+    // 给 lightweight-charts 装数据 + 副图 + 指标。
+    // chart: LightweightCharts.IChartApi 实例
+    // rows: 由 parseStockCSV/parseStockJSON 返回的 OHLCV 数组
+    // config: parseStockConfig 输出
+    // theme: getChartTheme 输出
+    //
+    // 注:lightweight-charts v5 用 chart.addSeries(SeriesType, options) 统一 API,
+    // v4 的 chart.addCandlestickSeries(options) 等 per-type 方法被移除。
+    // SeriesType 常量挂在 LightweightCharts 全局对象上 (LightweightCharts.CandlestickSeries 等)。
+    // Migration: https://tradingview.github.io/lightweight-charts/docs/migrations/from-v4-to-v5
+    function applyData(chart, rows, config, theme) {
+      const LWC = LightweightCharts;   // shorthand
+
+      // 主图:蜡烛/折线/面积
+      let mainSeries;
+      const seriesData = rows.map(r => ({
+        time: r.time,
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close
+      }));
+
+      if (config.type === 'line' || config.type === 'area') {
+        const lineData = rows.map(r => ({ time: r.time, value: r.close }));
+        if (config.type === 'area') {
+          mainSeries = chart.addSeries(LWC.AreaSeries, {
+            lineColor: theme.upColor,
+            topColor: theme.upColor + '80',
+            bottomColor: theme.upColor + '00'
+          });
+        } else {
+          mainSeries = chart.addSeries(LWC.LineSeries, { color: theme.upColor });
+        }
+        mainSeries.setData(lineData);
+      } else {
+        mainSeries = chart.addSeries(LWC.CandlestickSeries, {
+          upColor: theme.upColor,
+          downColor: theme.downColor,
+          borderUpColor: theme.upColor,
+          borderDownColor: theme.downColor,
+          wickUpColor: theme.upColor,
+          wickDownColor: theme.downColor
+        });
+        mainSeries.setData(seriesData);
+      }
+
+      // Volume 副图(overlay 在主图下方 25%)
+      // 关键:priceScaleId='' (空字符串) = overlay,在主图同一 pane 内通过
+      //       scaleMargins 定位下方。NOT 'volume' (那会创建独立 pane,占额外
+      //       垂直空间,挤掉 time scale)。
+      // 见 https://tradingview.github.io/lightweight-charts/tutorials/how_to/price-and-volume
+      if (config.indicators.includes('volume')) {
+        const hasVolume = rows.some(r => r.volume != null);
+        if (hasVolume) {
+          const volSeries = chart.addSeries(LWC.HistogramSeries, {
+            priceFormat: { type: 'volume' },
+            priceScaleId: '',          // overlay (NOT separate pane)
+            color: theme.volumeUp
+          });
+          volSeries.priceScale().applyOptions({
+            scaleMargins: { top: 0.75, bottom: 0 }
+          });
+          const volData = rows
+            .filter(r => r.volume != null)
+            .map(r => ({
+              time: r.time,
+              value: r.volume,
+              color: r.close >= r.open ? theme.volumeUp : theme.volumeDown
+            }));
+          volSeries.setData(volData);
+        }
+      }
+
+      // 移动均线
+      const maPeriods = { ma20: 20, ma50: 50, ma200: 200 };
+      for (const ind of config.indicators) {
+        if (ind in maPeriods) {
+          const period = maPeriods[ind];
+          if (rows.length < period) continue;   // 不够数据点,跳过
+          const maData = computeSMA(rows, period);
+          const maSeries = chart.addSeries(LWC.LineSeries, {
+            color: theme[ind],
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false
+          });
+          maSeries.setData(maData);
+        }
+      }
+
+      // 注:visible logical range 的设置移到 caller(createChart 后的 rAF 块),
+      // 因为 resize 会重置它。applyData 只负责装数据 + 配置 series。
+    }
+
+    // ---------------------------------------------------------------------------
+    // 4. registerBlock
+    // ---------------------------------------------------------------------------
+
+    ExtensionRegistry.registerBlock({
+      name: 'stock-chart',
+      type: 'fenced-code',
+      editStyle: 'typora',
+      capabilities: { rerenderOn: ['theme-change'] },
+
+      match(block /*, ctx */) {
+        return block.language === 'stock';
+      },
+
+      render(block, ctx) {
+        // ---- Step 1: 同步解析配置(失败立即抛,走 safeCall fallback) ----
+        let config;
+        try {
+          config = parseStockConfig(block.content);
+        } catch (e) {
+          // 创建 root 后再 setError,这样错误也能展示 (而不是裸 throw 让 core 兜底)
+          const root = ctx.createBlockRoot({
+            renderer: 'stock-chart',
+            sourceMarkdown: '```stock\n' + block.content + '\n```',
+            language: 'stock',
+            editStyle: 'typora'
+          });
+          ctx.setError(root, {
+            type: 'syntax',
+            message: 'Stock chart config error:\n' + e.message
+          });
+          return root;
+        }
+
+        // ---- Step 2: 创建 root + 标题 ----
+        const root = ctx.createBlockRoot({
+          renderer: 'stock-chart',
+          sourceMarkdown: '```stock\n' + block.content + '\n```',
+          language: 'stock',
+          editStyle: 'typora'
+        });
+
+        // ---- Step 3: 库就绪检查 ----
+        if (typeof LightweightCharts === 'undefined') {
+          ctx.setError(root, {
+            type: 'runtime',
+            message: 'lightweight-charts library failed to load. Check inkwell-asset:///lightweight-charts/lightweight-charts.standalone.production.js is reachable.'
+          });
+          return root;
+        }
+
+        // ---- Step 4: loading 占位 + 异步加载/渲染 ----
+        ctx.setLoading(root, 'Loading stock data…');
+
+        ctx.runAsync(root, async (signal) => {
+          // 4a. 读文件
+          let fileContent;
+          try {
+            fileContent = await window.inkwell.readLocalFile(config.file, signal);
+          } catch (e) {
+            if (signal.aborted) return;
+            throw e;
+          }
+          if (signal.aborted) return;
+
+          // 4b. 派发 parser → OHLCV 数组
+          const parser = selectDataParser(config.file);   // 抛 StockDataFormatError
+          const rows = parser(fileContent);                // 抛 StockDataParseError
+          if (signal.aborted) return;
+
+          // 4c. 构造容器
+          const out = document.createElement('div');
+          if (config.title) {
+            const titleEl = document.createElement('div');
+            titleEl.className = 'stock-chart-title';
+            titleEl.textContent = config.title;
+            out.appendChild(titleEl);
+          }
+          const canvasHost = document.createElement('div');
+          canvasHost.className = 'stock-chart-canvas-host';
+          // 容器尺寸:height 包含主图 + chart 内部 time scale 的总和。
+          // lightweight-charts v5 在 Inkwell ProseMirror 文档环境下,把 host 高度
+          // 全部给主图,time scale 画在 host 外面 ~28px。在 reference Safari 环境
+          // 里这种溢出是 visible 的,但 Inkwell 里 stock-chart-note 紧贴 host 底部
+          // 覆盖了 time scale 溢出区,导致日期看不见。
+          //
+          // +35 提供 chart 实际需要的 time scale 空间 (28px chart 内部高度 + 一点
+          // 防御性余量给字体/DPR 差异)。这是经过 D3 reference diagnostic 实验确认的
+          // 数值。详见 PHASE_3_ARCHITECTURE.md 附录 D.16。
+          //
+          // 用户书写 `height: 400` 期望的是 "图表占用 400px 屏幕空间",
+          // 因此 stock-chart-canvas-host 实际占 435px 是符合 user mental model 的:
+          // 主图正好 400px,时间轴在主图下方占 35px(不算入用户的 height)。
+          canvasHost.style.height = (config.height + 35) + 'px';
+          canvasHost.style.width = '100%';
+          out.appendChild(canvasHost);
+
+          // 4d. 创建 chart 实例(必须在 canvasHost 已挂到 DOM 后才能正确测量宽度;
+          //     先 replaceOutput 让它 in-DOM,再 createChart)
+          ctx.replaceOutput(root, out);
+
+          if (signal.aborted) {
+            // 已被取消,清理
+            return;
+          }
+
+          const theme = getChartTheme(ctx.theme.isDark);
+          const chart = LightweightCharts.createChart(canvasHost, {
+            // v5: autoSize 让 chart 跟容器尺寸同步(内置 ResizeObserver)。
+            // 不传 width/height — 当 autoSize=true 时它们被忽略,同时传会引入歧义。
+            autoSize: true,
+            layout: {
+              background: { type: 'solid', color: theme.background },
+              textColor: theme.textColor
+            },
+            grid: {
+              vertLines: { color: theme.gridColor },
+              horzLines: { color: theme.gridColor }
+            },
+            rightPriceScale: { borderColor: theme.borderColor },
+            timeScale: { borderColor: theme.borderColor, timeVisible: false }
+          });
+
+          applyData(chart, rows, config, theme);
+
+          // 4e. 把实例挂在 root 上,便于主题切换/cleanup 时复用
+          root.__inkwellStockChart = chart;
+          root.__inkwellStockRows = rows;
+          root.__inkwellStockConfig = config;
+
+          // 关键修复:即使 autoSize=true,首次 createChart 时 canvasHost.clientWidth
+          // 可能尚未稳定(replaceOutput 后的渲染时序问题)。等下一帧再强制 resize
+          // 一次,确保 chart 与容器实际尺寸对齐。
+          //
+          // 顺序很重要:resize 会重置 time scale 的 visible logical range,
+          // 所以 setVisibleLogicalRange 必须在 resize 之后调用。
+          // 见 PR 4' D3 修复记录:PHASE_3_ARCHITECTURE.md 附录 D.16
+          requestAnimationFrame(() => {
+            if (signal.aborted) return;
+            try {
+              chart.resize(canvasHost.clientWidth, canvasHost.clientHeight);
+              // 在 resize 之后强制范围 — applyData 里设的会被 resize 抹掉
+              if (rows.length > 0) {
+                chart.timeScale().setVisibleLogicalRange({
+                  from: -0.5,
+                  to: rows.length - 0.5
+                });
+              }
+            } catch (e) {
+              // chart 可能已被 dispose,忽略
+            }
+          });
+
+          // 4f. 跳过事件行的诊断提示
+          if (rows._skippedEventLines && rows._skippedEventLines.length > 0) {
+            const note = document.createElement('div');
+            note.className = 'stock-chart-note';
+            note.textContent = `(${rows._skippedEventLines.length} Yahoo event row(s) skipped: dividend / split)`;
+            out.appendChild(note);
+          }
+
+          // 4g. autoSize 已经接管 width 跟踪,无需手写 ResizeObserver。
+        }, {
+          onError(error, rootEl) {
+            // 分类:syntax (用户改 .md 源码就能修) vs runtime (系统/环境问题)
+            // syntax 类:配置错、文件不存在、路径不合规——用户在编辑器里改源码即可
+            // runtime 类:bridge 失败、库加载失败、无文档上下文等——非用户可修
+            const isSyntax = (
+              error instanceof StockConfigError ||
+              error instanceof StockDataParseError ||
+              error instanceof StockDataFormatError ||
+              (error && (
+                error.code === 'FILE_NOT_FOUND' ||
+                error.code === 'INVALID_FILE_PREFIX' ||
+                error.code === 'OUTSIDE_ATTACHMENT_DIR'
+              ))
+            );
+            ctx.setError(rootEl, {
+              type: isSyntax ? 'syntax' : 'runtime',
+              message: (isSyntax ? 'Stock chart error:\n' : 'Stock chart render failed:\n') +
+                       (error && error.message ? error.message : String(error))
+            });
+          }
+        });
+
+        return root;
+      }
+
+      // 不实现 serialize:core 直接读 data-source-b64 即可
+      // (跟 Mermaid/KaTeX 一样,源码完全决定渲染)
+    });
+  })();
+
   // ----------------------------------------------------------
   // Markdown Parser: Markdown → HTML
   // ----------------------------------------------------------
@@ -1787,7 +2684,9 @@
       text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
       text = text.replace(/_(.+?)_/g, '<em>$1</em>');
       text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
-      text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+      // Inline code:内容必须 HTML-escape,否则 `<script>` `<style>` 等
+      // 字面量会让浏览器进入特殊解析模式吞掉之后的内容(<code> 不是 raw text 元素)
+      text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + this.escapeHtml(code) + '</code>');
       // Inline extensions（==highlight== 等）— PR 1 引入
       if (typeof ExtensionRegistry !== 'undefined') {
         text = ExtensionRegistry.applyInlineToHTML(text);

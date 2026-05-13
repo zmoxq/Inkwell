@@ -127,6 +127,9 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     private var pendingMarkdown: String?
     private var pendingTheme: String?
     private var documentBaseURL: URL?
+    /// Phase 3 PR 4' D3: 完整文档 URL,供 readLocalFile 边界检查使用
+    /// (从中提取 <docname> 作为同名子文件夹名)。
+    private var documentURL: URL?
     #if os(iOS)
     var _carouselModeForPicker: Bool = false
     #endif
@@ -144,6 +147,7 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         self.onSaveRequest = onSaveRequest
         self.onEditorReady = onEditorReady
         self.documentBaseURL = documentURL?.deletingLastPathComponent()
+        self.documentURL = documentURL
         super.init()
         
         if !markdownContent.wrappedValue.isEmpty {
@@ -473,6 +477,12 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             print("⚠️ [Extension:\(ext)] \(method) failed: \(errorMsg)")
             // 未来可加：toast、写日志文件、统计上报
             
+        case "readLocalFile":
+            // Phase 3 PR 4' D3: 通用本地文件读取通道。
+            // 服务任何"扩展引用 .md 同名子文件夹内文件"的需求(stock-chart 是第一个用户,
+            // 未来 mermaid 引用大型 .mmd 文件等可复用此通道)。
+            handleReadLocalFile(payload: payload)
+            
         case "requestLinkInput":
             // JS is asking for a link URL — show a native dialog
             let selectedText = payload["selectedText"] as? String ?? ""
@@ -502,6 +512,116 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             
         default:
             break
+        }
+    }
+    
+    // MARK: - Phase 3 PR 4' D3: readLocalFile bridge
+    
+    /// 处理 JS 端通过 inkwell 通道发来的 readLocalFile 请求。
+    ///
+    /// 期望 payload:
+    ///   {
+    ///     "relativePath": "<docname>/<filename>",
+    ///     "requestId":    "rf-1-1234567890"
+    ///   }
+    ///
+    /// 回调 (通过 evaluateJavaScript 调 window.inkwell._onLocalFileResponse):
+    ///   - 成功: { success: true, content: "<file content>" }
+    ///   - 失败: { success: false, error: { code: "FILE_NOT_FOUND", message: "..." } }
+    ///
+    /// 边界检查由 InkwellFileReadResolver 完成。具体规则:
+    ///   - 拒绝绝对路径
+    ///   - 必须以 "<docname>/" 开头
+    ///   - 标准化后必须仍在同名子文件夹内
+    /// (详见 PHASE_3_ARCHITECTURE.md 附录 D.6 + D.15)
+    private func handleReadLocalFile(payload: [String: Any]) {
+        guard let relativePath = payload["relativePath"] as? String,
+              let requestId = payload["requestId"] as? String
+        else {
+            print("[Inkwell] readLocalFile: malformed payload")
+            return
+        }
+        
+        // 1. 文档 URL 就绪检查
+        guard let docURL = documentURL else {
+            replyToFileRead(requestId: requestId, error: .noDocument)
+            return
+        }
+        
+        // 2. 路径解析 + 边界检查 (纯函数,可单元测试)
+        let resolution = InkwellFileReadResolver.resolve(
+            relativePath: relativePath,
+            documentURL: docURL
+        )
+        
+        switch resolution {
+        case .error(let err):
+            replyToFileRead(requestId: requestId, error: err)
+            
+        case .ok(let url):
+            // 3. 读文件 (off-main 线程,避免阻塞 UI 上的 message handler)
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                
+                let result: Result<String, InkwellFileReadError>
+                do {
+                    let content = try String(contentsOf: url, encoding: .utf8)
+                    result = .success(content)
+                } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                    result = .failure(.fileNotFound)
+                } catch {
+                    print("[Inkwell] readLocalFile IO error: \(error)")
+                    result = .failure(.ioError)
+                }
+                
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let content):
+                        self.replyToFileRead(requestId: requestId, content: content)
+                    case .failure(let err):
+                        self.replyToFileRead(requestId: requestId, error: err)
+                    }
+                }
+            }
+        }
+    }
+    
+    /// 成功路径回调
+    private func replyToFileRead(requestId: String, content: String) {
+        // content 可能很大且含任意字符,用 JSON 编码安全传递
+        let payloadDict: [String: Any] = [
+            "success": true,
+            "content": content
+        ]
+        evalFileReadResponse(requestId: requestId, payload: payloadDict)
+    }
+    
+    /// 错误路径回调
+    private func replyToFileRead(requestId: String, error: InkwellFileReadError) {
+        let payloadDict: [String: Any] = [
+            "success": false,
+            "error": [
+                "code": error.rawValue,
+                "message": error.message
+            ]
+        ]
+        evalFileReadResponse(requestId: requestId, payload: payloadDict)
+    }
+    
+    private func evalFileReadResponse(requestId: String, payload: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let jsonStr = String(data: data, encoding: .utf8) else {
+            print("[Inkwell] readLocalFile: failed to encode response payload")
+            return
+        }
+        // requestId 来自 JS 生成的字符串 "rf-N-timestamp",安全(仅 ASCII)。
+        // 但仍做 escape 防御性处理。
+        let escapedRequestId = requestId.replacingOccurrences(of: "\"", with: "\\\"")
+        let js = "window.inkwell._onLocalFileResponse(\"\(escapedRequestId)\", \(jsonStr));"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                print("[Inkwell] readLocalFile response eval failed: \(error)")
+            }
         }
     }
     
