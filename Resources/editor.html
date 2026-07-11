@@ -1354,6 +1354,9 @@
 
       decorate(block /*, ctx */) {
         if (typeof hljs === 'undefined') return;
+        // Skip live fences managed by EditMode — they will be replaced by a
+        // BlockRenderer when the cursor leaves; hljs must not touch them.
+        if (block.classList.contains('inkwell-live-fence')) return;
 
         // 重置之前的高亮（hljs 不能在已 highlighted 元素上重跑）
         const plainText = block.textContent;
@@ -2874,6 +2877,19 @@
       this.editor = editor;
     },
 
+    // Return the user-authored text of a block element, excluding UI
+    // decorations injected into the contentEditable DOM (e.g. drag handles).
+    // Currently only strips .inkwell-drag-handle; see PHASE_3_5_EDITMODE.md
+    // appendix for the design-debt note on generalizing this.
+    getBlockSourceText(el) {
+      let t = '';
+      for (const ch of el.childNodes) {
+        if (ch.nodeType === Node.ELEMENT_NODE && ch.classList.contains('inkwell-drag-handle')) continue;
+        t += ch.textContent;
+      }
+      return t;
+    },
+
     // Called on every input event. Checks the current block for
     // markdown patterns and converts them to rendered HTML.
     onInput(e) {
@@ -2910,7 +2926,7 @@
       // Only process <p> elements (not already converted blocks)
       if (block.tagName !== 'P' && block.tagName !== 'DIV') return false;
 
-      const text = block.textContent;
+      const text = this.getBlockSourceText(block);
 
       // --- Heading: # ## ### #### ##### ######
       const headingMatch = text.match(/^(#{1,6})\s+(.*)$/);
@@ -2944,25 +2960,29 @@
       }
 
       // --- Fenced code block: ```
-      // 注：用户实时输入 ```mermaid 等会先生成 <pre><code>。
-      //     reload 后才会被 BlockRenderer 接管。
-      //     "实时切换 BlockRenderer" 是 typora 风格 edit-mode 议题，留 future work。
-      //     PR 3 KaTeX display math ($$...$$) 同样不在 LiveConverter 接入,
-      //     用户敲完整段后保存/重载才能看到渲染。这是有意识的妥协,
-      //     等未来 LiveConvert PR 一次性给所有 BlockRenderer 设计统一 edit-mode。
-      //     详见 PHASE_3_ARCHITECTURE.md 附录 D.7。
+      // Phase 3.5-A: mark with inkwell-live-fence so EditMode can manage
+      // the editing→rendered transition when the cursor leaves.
       if (/^```/.test(text.trim())) {
         e.preventDefault();
         const lang = text.trim().slice(3).trim();
         const pre = document.createElement('pre');
         const code = document.createElement('code');
         if (lang) {
-          code.className = 'language-' + lang;
           pre.setAttribute('data-language', lang);
+        }
+        // Check if a BlockRenderer is registered for this language
+        const hasRenderer = lang && typeof ExtensionRegistry !== 'undefined' &&
+          ExtensionRegistry.findBlockRenderer({ type: 'fenced-code', language: lang, content: '' });
+        if (hasRenderer) {
+          code.className = 'inkwell-live-fence';
+          code.setAttribute('data-fence-language', lang);
+        } else if (lang) {
+          code.className = 'language-' + lang;
         }
         code.textContent = '\n';
         pre.appendChild(code);
         block.parentNode.replaceChild(pre, block);
+        if (hasRenderer) EditMode._editingFence = pre;
         this.setCursorAt(code, 0);
         this.editor.onContentChange();
         return true;
@@ -4850,6 +4870,100 @@
   };
 
   // ----------------------------------------------------------
+  // EditMode — Phase 3.5-A: typora-style edit-mode 状态机
+  // ----------------------------------------------------------
+  // 管理 BlockRenderer 渲染块的 rendered ↔ editing 双态转换。
+  // 详见 PHASE_3_5_EDITMODE.md §三–§五。
+  // Step 1: 骨架——intent 入口 + 状态标记 + IME 排队,不接 UI 事件。
+  const EditMode = {
+    _editingFence: null,
+    _composing: false,
+    // Single-slot, last-wins: during IME composition only the most recent
+    // intent matters — earlier ones are stale because the DOM has moved on.
+    _pendingIntent: null,
+
+    init(editor) {
+      this.editor = editor;
+      const el = editor.element;
+      el.addEventListener('compositionstart', () => { this._composing = true; });
+      el.addEventListener('compositionend', () => {
+        this._composing = false;
+        if (this._pendingIntent) {
+          const intent = this._pendingIntent;
+          this._pendingIntent = null;
+          if (intent.type === 'enter') {
+            this._doEnterEdit(intent.blockRoot, intent.hint);
+          } else {
+            this._doLeaveEdit(intent.fenceEl);
+          }
+        }
+      });
+
+      // Mousedown on a rendered block → enter edit (§4 event table)
+      el.addEventListener('mousedown', (e) => {
+        const blockRoot = e.target.closest('.inkwell-block-renderer');
+        if (!blockRoot) return;
+        if (blockRoot.getAttribute('data-edit-style') !== 'typora') return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.requestEnterEdit(blockRoot, {
+          via: 'click',
+          point: { x: e.clientX, y: e.clientY }
+        });
+      });
+    },
+
+    requestEnterEdit(blockRoot, hint) {
+      if (!blockRoot || !blockRoot.classList.contains('inkwell-block-renderer')) return;
+      if (blockRoot.getAttribute('data-edit-style') !== 'typora') return;
+      if (this._composing) {
+        this._pendingIntent = { type: 'enter', blockRoot, hint };
+        return;
+      }
+      this._doEnterEdit(blockRoot, hint);
+    },
+
+    requestLeaveEdit(fenceEl) {
+      if (!fenceEl) fenceEl = this._editingFence;
+      if (!fenceEl || !fenceEl.querySelector('code.inkwell-live-fence')) return;
+      if (this._composing) {
+        this._pendingIntent = { type: 'leave', fenceEl };
+        return;
+      }
+      this._doLeaveEdit(fenceEl);
+    },
+
+    _doEnterEdit(blockRoot, hint) {
+      // Step 4 — implementation pending
+    },
+
+    _setCursorInCode(codeEl, offset) {
+      const textNode = codeEl.firstChild || codeEl;
+      const pos = Math.min(offset, textNode.textContent ? textNode.textContent.length : 0);
+      const range = document.createRange();
+      range.setStart(textNode, pos);
+      range.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    },
+
+    _doLeaveEdit(fenceEl) {
+      // Step 4 — implementation pending
+    },
+
+    isEditing() {
+      return this._editingFence !== null;
+    },
+
+    getEditingFence() {
+      return this._editingFence;
+    }
+  };
+
+  window.EditMode = EditMode;
+
+  // ----------------------------------------------------------
   // Editor Core
   // ----------------------------------------------------------
   const Editor = {
@@ -4887,6 +5001,9 @@
 
       // Initialize focus & typewriter mode
       FocusMode.init(this);
+
+      // Initialize edit-mode state machine (Phase 3.5-A)
+      EditMode.init(this);
 
       this.element.addEventListener('input', (e) => {
         this.onContentChange();
@@ -5442,6 +5559,15 @@
           break;
         }
         node = node.parentNode;
+      }
+
+      // EditMode: detect cursor leaving a live fence → trigger leave-edit.
+      // Must run BEFORE rehighlightAll to prevent hljs from corrupting the fence.
+      if (EditMode.isEditing()) {
+        const fence = EditMode.getEditingFence();
+        if (fence && !fence.contains(sel.getRangeAt(0).startContainer)) {
+          EditMode.requestLeaveEdit(fence);
+        }
       }
 
       // If cursor left a code block, re-highlight all
