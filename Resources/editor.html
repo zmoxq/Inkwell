@@ -4911,6 +4911,77 @@
           point: { x: e.clientX, y: e.clientY }
         });
       });
+
+      // Edit-button click → enter edit (§4 event table)
+      el.addEventListener('click', (e) => {
+        const btn = e.target.closest('.renderer-edit-action');
+        if (!btn) return;
+        const blockRoot = btn.closest('.inkwell-block-renderer');
+        if (!blockRoot || blockRoot.getAttribute('data-edit-style') !== 'edit-button') return;
+        e.preventDefault();
+        this.requestEnterEdit(blockRoot, { via: 'edit-button' });
+      });
+
+      // Arrow keys / Backspace → enter edit when adjacent to a rendered block (§4)
+      el.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        const key = e.key;
+        if (key !== 'ArrowDown' && key !== 'ArrowUp' &&
+            key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Backspace') return;
+        if (this.isEditing()) return;
+
+        const sel = window.getSelection();
+        if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+
+        // Walk up to the direct child of #editor
+        let block = range.startContainer;
+        while (block && block.parentNode !== el) {
+          block = block.parentNode;
+        }
+        if (!block) return;
+
+        if (key === 'ArrowDown' || key === 'ArrowRight') {
+          if (!this._isAtBlockEnd(block, range)) return;
+          const next = block.nextElementSibling;
+          if (!next || !next.classList.contains('inkwell-block-renderer')) return;
+          if (next.getAttribute('data-edit-style') !== 'typora') return;
+          e.preventDefault();
+          this.requestEnterEdit(next, { via: 'arrow-down' });
+        } else if (key === 'ArrowUp' || key === 'ArrowLeft') {
+          if (!this._isAtBlockStart(block, range)) return;
+          const prev = block.previousElementSibling;
+          if (!prev || !prev.classList.contains('inkwell-block-renderer')) return;
+          if (prev.getAttribute('data-edit-style') !== 'typora') return;
+          e.preventDefault();
+          this.requestEnterEdit(prev, { via: 'arrow-up' });
+        } else if (key === 'Backspace') {
+          if (!this._isAtBlockStart(block, range)) return;
+          const prev = block.previousElementSibling;
+          if (!prev || !prev.classList.contains('inkwell-block-renderer')) return;
+          if (prev.getAttribute('data-edit-style') !== 'typora') return;
+          e.preventDefault();
+          this.requestEnterEdit(prev, { via: 'backspace' });
+        }
+      });
+    },
+
+    _isAtBlockStart(block, range) {
+      const r = document.createRange();
+      r.setStart(block, 0);
+      r.setEnd(range.startContainer, range.startOffset);
+      const frag = r.cloneContents();
+      frag.querySelectorAll('.inkwell-drag-handle').forEach(h => h.remove());
+      return frag.textContent.replace(/​/g, '') === '';
+    },
+
+    _isAtBlockEnd(block, range) {
+      const r = document.createRange();
+      r.setStart(range.startContainer, range.startOffset);
+      r.setEnd(block, block.childNodes.length);
+      const frag = r.cloneContents();
+      frag.querySelectorAll('.inkwell-drag-handle').forEach(h => h.remove());
+      return frag.textContent.replace(/​/g, '') === '';
     },
 
     requestEnterEdit(blockRoot, hint) {
@@ -5121,6 +5192,20 @@
       this.element.addEventListener('keydown', (e) => {
         // Slash menu intercepts first
         if (SlashMenu.handleKeyDown(e)) return;
+        // Inside <pre>: insert a plain newline instead of letting the browser
+        // duplicate the entire block element (pre-existing WebKit behavior).
+        if (e.key === 'Enter' && !e.isComposing) {
+          const sel = window.getSelection();
+          if (sel.rangeCount) {
+            const c = sel.getRangeAt(0).startContainer;
+            const pre = (c.nodeType === Node.ELEMENT_NODE ? c : c.parentNode).closest('pre');
+            if (pre && this.element.contains(pre)) {
+              e.preventDefault();
+              document.execCommand('insertText', false, '\n');
+              return;
+            }
+          }
+        }
         // Handle Enter for block-level conversions
         if (e.key === 'Enter' && !e.shiftKey) {
           if (LiveConverter.onEnter(e)) return;
