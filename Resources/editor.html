@@ -4934,7 +4934,67 @@
     },
 
     _doEnterEdit(blockRoot, hint) {
-      // Step 4 — implementation pending
+      // Abort any in-flight async render
+      const ctrl = blockRoot.__inkwellAbortController;
+      if (ctrl) ctrl.abort();
+
+      // Decode source markdown from data-source-b64
+      const b64 = blockRoot.getAttribute('data-source-b64') || '';
+      let source = '';
+      try {
+        source = ExtensionRegistry._internals.decodeSourceB64(b64);
+      } catch (_) {}
+      if (!source) return;
+
+      // Detect block type and extract inner content + language
+      let blockType, lang, inner;
+      const mathMatch = source.match(/^\$\$\s*\n?([\s\S]*?)\n?\$\$\s*$/);
+      if (mathMatch) {
+        blockType = 'display-math';
+        lang = '';
+        inner = mathMatch[1];
+      } else {
+        blockType = 'fenced-code';
+        const fenceMatch = source.match(/^```(\S*)/);
+        lang = fenceMatch ? fenceMatch[1] : '';
+        inner = source.replace(/^```[^\n]*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+
+      // Build editing-state <pre><code>
+      const pre = document.createElement('pre');
+      pre.setAttribute('data-block-type', blockType);
+      if (lang) pre.setAttribute('data-language', lang);
+      const code = document.createElement('code');
+      code.className = 'inkwell-live-fence';
+      if (lang) code.setAttribute('data-fence-language', lang);
+      code.textContent = inner || '\n';
+      pre.appendChild(code);
+
+      // Replace renderer root with editable fence
+      if (!blockRoot.parentNode) return;
+      blockRoot.parentNode.replaceChild(pre, blockRoot);
+      this._editingFence = pre;
+
+      // Cursor placement per §5.1 step 5
+      const via = hint && hint.via;
+      if (via === 'click' && hint.point) {
+        // Best-effort caret positioning from click coordinates
+        const range = document.caretRangeFromPoint(hint.point.x, hint.point.y);
+        if (range && pre.contains(range.startContainer)) {
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } else {
+          this._setCursorInCode(code, 0);
+        }
+      } else if (via === 'arrow-up' || via === 'backspace') {
+        this._setCursorInCode(code, code.textContent.length);
+      } else {
+        // arrow-down, edit-button, or default: content start
+        this._setCursorInCode(code, 0);
+      }
+
+      this.editor.onContentChange();
     },
 
     _setCursorInCode(codeEl, offset) {
@@ -4949,7 +5009,52 @@
     },
 
     _doLeaveEdit(fenceEl) {
-      // Step 4 — implementation pending
+      const codeEl = fenceEl.querySelector('code.inkwell-live-fence');
+      if (!codeEl) return;
+
+      const blockType = fenceEl.getAttribute('data-block-type') || 'fenced-code';
+      const lang = fenceEl.getAttribute('data-language') || codeEl.getAttribute('data-fence-language') || '';
+      const content = codeEl.textContent.replace(/^\n|\n$/g, '');
+
+      // Construct block descriptor matching the registry's expected format
+      let block;
+      if (blockType === 'display-math') {
+        const raw = '$$\n' + content + '\n$$';
+        block = { type: 'display-math', content: content, raw: raw };
+      } else {
+        block = { type: 'fenced-code', language: lang, content: content };
+      }
+      const renderer = ExtensionRegistry.findBlockRenderer(block);
+
+      if (!renderer) {
+        // Degrade to plain: strip live-fence markers, let hljs decorate
+        codeEl.classList.remove('inkwell-live-fence');
+        codeEl.removeAttribute('data-fence-language');
+        fenceEl.removeAttribute('data-language');
+        if (lang) codeEl.className = 'language-' + lang;
+        this._editingFence = null;
+        this.editor.highlightCodeBlocks();
+        this.editor.onContentChange();
+        return;
+      }
+
+      // Direct-call render (no placeholder — §5.2 step 3)
+      const root = ExtensionRegistry.renderBlock(block, renderer);
+      if (root && root instanceof HTMLElement && fenceEl.parentNode) {
+        fenceEl.parentNode.replaceChild(root, fenceEl);
+        this._editingFence = null;
+        this.editor.onContentChange();
+      } else {
+        // render() threw synchronously (safeCall returned null) — fallback to
+        // plain code block preserving source (existing fault table behavior)
+        codeEl.classList.remove('inkwell-live-fence');
+        codeEl.removeAttribute('data-fence-language');
+        fenceEl.removeAttribute('data-language');
+        if (lang) codeEl.className = 'language-' + lang;
+        this._editingFence = null;
+        this.editor.highlightCodeBlocks();
+        this.editor.onContentChange();
+      }
     },
 
     isEditing() {
