@@ -5194,6 +5194,8 @@
         if (SlashMenu.handleKeyDown(e)) return;
         // Inside <pre>: insert a plain newline instead of letting the browser
         // duplicate the entire block element (pre-existing WebKit behavior).
+        // Uses direct DOM insertion because execCommand('insertText', '\n')
+        // is unreliable in WebKit <pre> elements (causes block splitting).
         if (e.key === 'Enter' && !e.isComposing) {
           const sel = window.getSelection();
           if (sel.rangeCount) {
@@ -5201,8 +5203,80 @@
             const pre = (c.nodeType === Node.ELEMENT_NODE ? c : c.parentNode).closest('pre');
             if (pre && this.element.contains(pre)) {
               e.preventDefault();
-              document.execCommand('insertText', false, '\n');
+              const range = sel.getRangeAt(0);
+              if (!range.collapsed) range.deleteContents();
+              const textNode = range.startContainer;
+              if (textNode.nodeType === Node.TEXT_NODE) {
+                const off = range.startOffset;
+                const txt = textNode.textContent;
+                const atEnd = (off >= txt.length) ||
+                  (off === txt.length - 1 && txt[off] === '\n');
+                textNode.textContent = txt.slice(0, off) + '\n' + txt.slice(off);
+                if (atEnd) {
+                  // Trailing \n in <pre> is invisible; append a second \n
+                  // so the cursor has a visible line to sit on.
+                  const afterInsert = txt.slice(off);
+                  if (afterInsert === '' || afterInsert === '\n') {
+                    textNode.textContent += '\n';
+                  }
+                }
+                range.setStart(textNode, off + 1);
+                range.collapse(true);
+              } else {
+                const nl = document.createTextNode('\n\n');
+                if (range.startOffset < textNode.childNodes.length) {
+                  textNode.insertBefore(nl, textNode.childNodes[range.startOffset]);
+                } else {
+                  textNode.appendChild(nl);
+                }
+                range.setStart(nl, 1);
+                range.collapse(true);
+              }
+              sel.removeAllRanges();
+              sel.addRange(range);
+              this.onContentChange();
               return;
+            }
+          }
+        }
+        // Inside <pre>: prevent Backspace at the very start from merging
+        // the code block with the previous element (WebKit default behavior).
+        if (e.key === 'Backspace' && !e.isComposing) {
+          const sel = window.getSelection();
+          if (sel.rangeCount && sel.isCollapsed) {
+            const range = sel.getRangeAt(0);
+            const c = range.startContainer;
+            const pre = (c.nodeType === Node.ELEMENT_NODE ? c : c.parentNode).closest('pre');
+            if (pre && this.element.contains(pre)) {
+              const r = document.createRange();
+              r.setStart(pre, 0);
+              r.setEnd(range.startContainer, range.startOffset);
+              const frag = r.cloneContents();
+              frag.querySelectorAll('.inkwell-drag-handle').forEach(h => h.remove());
+              if (frag.textContent === '') {
+                // If block content is empty, degrade to plain paragraph
+                // (Typora convention: empty code block + Backspace = paragraph)
+                const codeEl = pre.querySelector('code') || pre;
+                const content = codeEl.textContent.replace(/[\n\s]/g, '');
+                if (content === '') {
+                  e.preventDefault();
+                  if (EditMode.isEditing() && EditMode.getEditingFence() === pre) {
+                    EditMode._editingFence = null;
+                  }
+                  const p = document.createElement('p');
+                  p.innerHTML = '<br>';
+                  pre.parentNode.replaceChild(p, pre);
+                  const newRange = document.createRange();
+                  newRange.setStart(p, 0);
+                  newRange.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(newRange);
+                  this.onContentChange();
+                  return;
+                }
+                e.preventDefault();
+                return;
+              }
             }
           }
         }
