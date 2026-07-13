@@ -5304,6 +5304,10 @@
       });
       this.updateDarkModeTheme();
 
+      // Ensure empty editor (new document, no loadMarkdown call) is usable
+      this.ensureEdgeGaps();
+      DragSort.refresh();
+
       this.postMessage('editorReady', {});
     },
 
