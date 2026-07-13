@@ -5006,6 +5006,11 @@
     },
 
     _doEnterEdit(blockRoot, hint) {
+      // Leave current editing block before entering a new one
+      if (this._editingFence) {
+        this._doLeaveEdit(this._editingFence);
+      }
+
       // Abort any in-flight async render
       const ctrl = blockRoot.__inkwellAbortController;
       if (ctrl) ctrl.abort();
