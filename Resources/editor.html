@@ -2983,6 +2983,7 @@
         pre.appendChild(code);
         block.parentNode.replaceChild(pre, block);
         if (hasRenderer) EditMode._editingFence = pre;
+        this.editor.ensureEdgeGaps();
         this.setCursorAt(code, 0);
         this.editor.onContentChange();
         return true;
@@ -5104,6 +5105,7 @@
         fenceEl.removeAttribute('data-language');
         if (lang) codeEl.className = 'language-' + lang;
         this._editingFence = null;
+        this.editor.ensureEdgeGaps();
         this.editor.highlightCodeBlocks();
         this.editor.onContentChange();
         return;
@@ -5114,6 +5116,7 @@
       if (root && root instanceof HTMLElement && fenceEl.parentNode) {
         fenceEl.parentNode.replaceChild(root, fenceEl);
         this._editingFence = null;
+        this.editor.ensureEdgeGaps();
         this.editor.onContentChange();
       } else {
         // render() threw synchronously (safeCall returned null) — fallback to
@@ -5299,6 +5302,44 @@
       this.postMessage('editorReady', {});
     },
 
+    // Ensure the first and last children of #editor are editable positions.
+    // If the document starts or ends with a non-paragraph block (<pre> or
+    // .inkwell-block-renderer), insert <p><br></p> so the cursor can reach
+    // those positions. Idempotent: won't insert if a <p> is already there.
+    ensureEdgeGaps() {
+      const el = this.element;
+      // Empty document: ensure at least one editable paragraph
+      if (!el.firstElementChild) {
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        el.appendChild(p);
+        // Auto-focus so the user sees a cursor immediately
+        setTimeout(() => {
+          el.focus();
+          const r = document.createRange();
+          r.setStart(p, 0);
+          r.collapse(true);
+          const s = window.getSelection();
+          s.removeAllRanges();
+          s.addRange(r);
+        }, 0);
+        return;
+      }
+      const needsGap = (node) =>
+        node && node.tagName !== 'P' &&
+        (node.tagName === 'PRE' || node.classList.contains('inkwell-block-renderer'));
+      if (needsGap(el.firstElementChild)) {
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        el.insertBefore(p, el.firstElementChild);
+      }
+      if (needsGap(el.lastElementChild)) {
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        el.appendChild(p);
+      }
+    },
+
     // --- Content ---
 
     onContentChange() {
@@ -5321,6 +5362,7 @@
       });
       // Phase 3 PR 2: 把 parser 输出的占位符替换为真正的 BlockRenderer 产物
       this._resolvePendingRenderers();
+      this.ensureEdgeGaps();
       this.highlightCodeBlocks();
       // Set up table resize handles
       this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
