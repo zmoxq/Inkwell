@@ -1,8 +1,8 @@
 # Inkwell Phase 3.5 — LiveConverter × Edit-Mode 状态机设计
 
-> **Status**: 已实施
-> **Document Version**: 1.4
-> **Last Updated**: 2026-07-13
+> **Status**: 已完成(全量回归通过)
+> **Document Version**: 1.5
+> **Last Updated**: 2026-07-14
 > **前置文档**: `INKWELL_ROADMAP.md`(Phase 3.5-A)、`PHASE_3_ARCHITECTURE.md` v2.0(附录 C.3 遗留 TODO)
 > **适用范围**: editor.html 内 BlockRenderer 的现场输入接入与 typora-style 编辑态
 
@@ -269,7 +269,7 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 | Step 4 | `a1c9858` | `_doEnterEdit` / `_doLeaveEdit` 完整实现,含 fenced-code 和 display-math 块类型派发。 |
 | Step 5 | `6b44551` | 方向键 ↑↓←→ / Backspace 进入编辑态 + edit-button 契约。因与 Enter fix 同批提交被包含在该 commit 中。 |
 | Step 6 | `83fea03` + `52c0300` | leave-before-enter guard(点击新块时先离开旧块)+ 空文档 init 路径 ensureEdgeGaps。Abort 分支由 Step 4 已覆盖(无需新增代码)。 |
-| Step 7 | 待回归验证后提交 | 全量回归 |
+| Step 7 | `9f90529` + `f74037b` | blur 语义收窄(document.hasFocus guard)+ serializer live-fence 派发 + carousel ensureEdgeGaps 覆盖 + 全量回归通过 |
 
 ### 实施记录:实施中发现并修复的 Pre-existing Bug
 
@@ -313,4 +313,4 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 ---
 
-*Document version: 1.5 — 新增 blur 语义收窄契约变更记录*
+*Document version: 1.5 — blur 语义收窄契约变更、Step 7 回归完成、serializer live-fence 修复、carousel ensureEdgeGaps 覆盖*
