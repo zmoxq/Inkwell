@@ -1,8 +1,8 @@
 # Inkwell Phase 3.5 — LiveConverter × Edit-Mode 状态机设计
 
-> **Status**: 设计定稿,待实施
-> **Document Version**: 1.0
-> **Last Updated**: 2026-07-06
+> **Status**: 已实施
+> **Document Version**: 1.4
+> **Last Updated**: 2026-07-13
 > **前置文档**: `INKWELL_ROADMAP.md`(Phase 3.5-A)、`PHASE_3_ARCHITECTURE.md` v2.0(附录 C.3 遗留 TODO)
 > **适用范围**: editor.html 内 BlockRenderer 的现场输入接入与 typora-style 编辑态
 
@@ -261,6 +261,56 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 **未来新增块类型的必经改动点**:若引入第三种非围栏块类型(如 `:::` 容器指令),`_doEnterEdit` 的定界符检测和 `_doLeaveEdit` 的 block descriptor 构造是必须扩展的两个位置。
 
+### 实施记录:§8 七步实施 Commit 对照
+
+| 步骤 | Commit | 说明 |
+|------|--------|------|
+| Steps 1–3 | `c5e55fa` | EditMode 骨架 + mousedown 拦截 + selectionchange leave-edit 检测 + hljs guard + getBlockSourceText fix。因未及时逐步提交,squashed 为一个 commit。 |
+| Step 4 | `a1c9858` | `_doEnterEdit` / `_doLeaveEdit` 完整实现,含 fenced-code 和 display-math 块类型派发。 |
+| Step 5 | `6b44551` | 方向键 ↑↓←→ / Backspace 进入编辑态 + edit-button 契约。因与 Enter fix 同批提交被包含在该 commit 中。 |
+| Step 6 | `83fea03` + `52c0300` | leave-before-enter guard(点击新块时先离开旧块)+ 空文档 init 路径 ensureEdgeGaps。Abort 分支由 Step 4 已覆盖(无需新增代码)。 |
+| Step 7 | 待回归验证后提交 | 全量回归 |
+
+### 实施记录:实施中发现并修复的 Pre-existing Bug
+
+| Bug | Commit | 说明 |
+|-----|--------|------|
+| DragSort handle 污染 textContent | `c5e55fa` | `<span class="inkwell-drag-handle">⠿</span>` 被 `block.textContent` 包含,破坏 LiveConverter 所有 `^` 锚定正则。修复:`getBlockSourceText(el)` 排除 `.inkwell-drag-handle`。 |
+| Enter 在 `<pre>` 末尾复制整块 | `6b44551` | WebKit contentEditable 默认行为在 `<pre>` 末尾按 Enter 时复制整个元素。修复:拦截 Enter,直接 DOM 插入 `\n`。 |
+| Backspace 在 `<pre>` 首行合并/删除 | `4f5e957` | WebKit 默认 Backspace 在块首合并相邻块,破坏代码块第一行。修复:首行 preventDefault + 空块退化为 `<p>`。 |
+| 守护段落缺失(OQ3 覆盖缺口) | `a635c79` | 文档首/尾为 `<pre>` 或 `.inkwell-block-renderer` 时无可编辑落点。修复:`ensureEdgeGaps()` 在冷加载、LiveConverter、leave-edit 三路径统一检查。 |
+| 空文档无 DragSort / ensureEdgeGaps 初始化 | `52c0300` | 新建文档(空内容)不走 `loadMarkdown`,跳过初始化。修复:Editor.init() 中 postMessage 前调用。 |
+
+### 设计债汇总
+
+| 编号 | 债务 | 来源 | 升级条件 |
+|------|------|------|----------|
+| D1 | Undo 不可撤销边界 | OQ1 裁决 | enter/leave-edit 的 `replaceChild` 不进浏览器 undo 栈。`<pre>` 内 Enter 直接 DOM 插入的换行也不进撤销栈。若用户反馈强烈,需引入自管 undo 系统。 |
+| D2 | UI 装饰物排除硬编码 | getBlockSourceText | 仅排除 `.inkwell-drag-handle`。第二种 UI 装饰物出现时需升级为统一 `data-inkwell-ui` 属性过滤。 |
+| D3 | §5.2 块类型派发 | Step 4 实施 | enter/leave-edit 按定界符格式派发(`` ``` `` 和 `$$`)。新增非围栏块类型时,`_doEnterEdit` 定界符检测和 `_doLeaveEdit` block descriptor 构造是必经改动点。 |
+
+### 契约变更:§4 blur 语义收窄
+
+**Commit**: `9f90529`
+
+**原设计**(§4 事件表第 6 行):
+
+> | 编辑器 blur / 保存触发 | 存在 editing 态块 | leaveEdit(全部) |
+
+**实施偏离**:窗口失活(用户切换到其他应用)不再触发 `leaveEdit`。`selectionchange` handler 增加 `document.hasFocus()` 守卫,仅在编辑器持有焦点时检测光标离开 fence。
+
+**根因**:WebKit 中窗口失焦时 `selectionchange` 事件仍然触发,且选区可能被移出 live fence 范围。对于刚创建的空 fence(用户尚未输入内容即切换窗口去复制代码),`_doLeaveEdit` 会将空内容交给 renderer 渲染,产生不可编辑的空渲染块,且 `ensureEdgeGaps` 可能清理相邻空段落,导致编辑上下文丢失。
+
+**安全性依据**:编辑态 fence 序列化无损——`getMarkdown()` → serializer 路径已正确处理 `<pre data-block-type>` 内容,即使保存动作发生在编辑态,磁盘产物仍为合法 Markdown。因此窗口失活时无需强制 leave-edit 来保护数据完整性。
+
+**收窄后的 blur 语义**:
+
+| 场景 | 行为 |
+|------|------|
+| 编辑器内部点击其他位置 | `selectionchange` 检测光标离开 fence → `leaveEdit` ✓ |
+| 窗口失活(切换应用) | `document.hasFocus()` 为 false → 不触发 `leaveEdit` |
+| 保存触发(`getMarkdown`) | serializer 直接序列化 fence 内容 → 无需 leave-edit |
+
 ---
 
-*Document version: 1.3 — 补入 §5.2 块类型派发实施记录*
+*Document version: 1.5 — 新增 blur 语义收窄契约变更记录*
