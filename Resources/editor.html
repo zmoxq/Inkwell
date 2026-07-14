@@ -2758,8 +2758,13 @@
           return '`' + inner + '`';
         case 'pre': {
           const codeEl = node.querySelector('code');
-          let lang = '';
-          if (codeEl) {
+          const blockType = node.getAttribute('data-block-type');
+          if (blockType === 'display-math') {
+            const content = (codeEl ? codeEl.textContent : node.textContent).replace(/^\n|\n$/g, '');
+            return '$$\n' + content + '\n$$\n\n';
+          }
+          let lang = node.getAttribute('data-language') || '';
+          if (!lang && codeEl) {
             const langMatch = codeEl.className.match(/language-(\w+)/);
             if (langMatch) lang = langMatch[1];
           }
@@ -5336,7 +5341,8 @@
       }
       const needsGap = (node) =>
         node && node.tagName !== 'P' &&
-        (node.tagName === 'PRE' || node.classList.contains('inkwell-block-renderer'));
+        (node.tagName === 'PRE' || node.classList.contains('inkwell-block-renderer') ||
+         node.getAttribute('contenteditable') === 'false');
       if (needsGap(el.firstElementChild)) {
         const p = document.createElement('p');
         p.innerHTML = '<br>';
