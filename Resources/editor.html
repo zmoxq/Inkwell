@@ -5878,7 +5878,7 @@
 
       // EditMode: detect cursor leaving a live fence → trigger leave-edit.
       // Must run BEFORE rehighlightAll to prevent hljs from corrupting the fence.
-      if (EditMode.isEditing()) {
+      if (EditMode.isEditing() && document.hasFocus()) {
         const fence = EditMode.getEditingFence();
         if (fence && !fence.contains(sel.getRangeAt(0).startContainer)) {
           EditMode.requestLeaveEdit(fence);
