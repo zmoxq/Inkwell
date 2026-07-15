@@ -2757,24 +2757,13 @@
           if (images.length === 1) {
             html += '<p><img src="' + this.escapeHtml(images[0].src) + '" alt="' + this.escapeHtml(images[0].alt) + '"></p>\n';
           } else {
-            // Build carousel
-            const slides = images.map((img, idx) =>
-              '<div class="inkwell-carousel-slide" data-index="' + idx + '">' +
-              '<img src="' + img.src + '" alt="' + this.escapeHtml(img.alt) + '">' +
-              '</div>'
-            ).join('');
-            const dots = images.map((_, idx) =>
-              '<button class="inkwell-carousel-dot' + (idx === 0 ? ' active' : '') + '" data-dot="' + idx + '" aria-label="Slide ' + (idx+1) + '"></button>'
-            ).join('');
-            const md = images.map(img => '![' + img.alt + '](' + img.src + ')').join('\n');
-            html +=
-              '<div class="inkwell-carousel" contenteditable="false" data-carousel data-count="' + images.length + '" data-current="0" data-md="' + this.escapeAttr(md) + '">' +
-                '<div class="inkwell-carousel-track">' + slides + '</div>' +
-                '<button class="inkwell-carousel-arrow prev" aria-label="Previous"><span class="inkwell-carousel-arrow-icon">&#8249;</span></button>' +
-                '<button class="inkwell-carousel-arrow next" aria-label="Next"><span class="inkwell-carousel-arrow-icon">&#8250;</span></button>' +
-                '<div class="inkwell-carousel-dots">' + dots + '</div>' +
-                '<div class="inkwell-carousel-counter">1 / ' + images.length + '</div>' +
-              '</div>\n';
+            const source = images.map(img => '![' + img.alt + '](' + img.src + ')').join('\n');
+            const sourceB64 = btoa(unescape(encodeURIComponent(source)));
+            html += '<div class="inkwell-pending-renderer"' +
+                    ' data-pending-block-type="image-group"' +
+                    ' data-pending-renderer="image-group"' +
+                    ' data-pending-language=""' +
+                    ' data-pending-source-b64="' + sourceB64 + '"></div>\n';
           }
           continue;
         }
@@ -5544,6 +5533,8 @@
             content = innerLines.slice(1, -1).join('\n');
           }
           block = { type: 'display-math', content: content, raw: source };
+        } else if (blockType === 'image-group') {
+          block = { type: 'image-group', content: source };
         } else {
           // 默认 fenced-code 兼容
           block = { type: 'fenced-code', language: lang, content: source };
@@ -5576,6 +5567,20 @@
         pre.className = 'inkwell-unrendered-math';
         pre.textContent = source;
         placeholderEl.parentNode.replaceChild(pre, placeholderEl);
+      } else if (blockType === 'image-group') {
+        const container = document.createDocumentFragment();
+        const imgLines = source.split('\n');
+        for (const line of imgLines) {
+          const m = line.match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+          if (!m) continue;
+          const p = document.createElement('p');
+          const img = document.createElement('img');
+          img.src = m[2];
+          img.alt = m[1];
+          p.appendChild(img);
+          container.appendChild(p);
+        }
+        placeholderEl.parentNode.replaceChild(container, placeholderEl);
       } else {
         // 默认 fenced-code 路径
         this._fallbackToPlainCodeBlock(placeholderEl, lang, source);
