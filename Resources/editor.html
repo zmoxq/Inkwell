@@ -2912,14 +2912,6 @@
             }
             return '';
           }
-          // Carousel → restore individual image lines
-          if (node.hasAttribute('data-carousel')) {
-            const md = node.getAttribute('data-md');
-            if (md) return md.replace(/&#10;/g, '\n') + '\n\n';
-            // Fallback: extract from slides
-            const imgs = Array.from(node.querySelectorAll('.inkwell-carousel-slide img'));
-            return imgs.map(img => '![' + (img.getAttribute('alt') || '') + '](' + (img.getAttribute('src') || '') + ')').join('\n') + '\n\n';
-          }
           return inner + '\n';
         default: return inner;
       }
