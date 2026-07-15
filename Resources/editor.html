@@ -3607,60 +3607,25 @@
         return;
       }
 
-      // Build carousel
-      const carousel = document.createElement('div');
-      carousel.className = 'inkwell-carousel';
-      carousel.setAttribute('contenteditable', 'false');
-      carousel.setAttribute('data-carousel', '');
-      carousel.setAttribute('data-count', this.images.length);
-      carousel.setAttribute('data-current', '0');
-      carousel.setAttribute('data-md', this.images.map(img => '![' + img.alt + '](' + img.src + ')').join('\n'));
-
-      const track = document.createElement('div'); track.className = 'inkwell-carousel-track';
-      this.images.forEach((img, idx) => {
-        const slide = document.createElement('div');
-        slide.className = 'inkwell-carousel-slide'; slide.setAttribute('data-index', idx);
-        const im = document.createElement('img'); im.src = img.src; im.alt = img.alt;
-        slide.appendChild(im); track.appendChild(slide);
-      });
-      carousel.appendChild(track);
-
-      const prevBtn = document.createElement('button');
-      prevBtn.className = 'inkwell-carousel-arrow prev'; prevBtn.setAttribute('aria-label', 'Previous');
-      prevBtn.innerHTML = '<span class="inkwell-carousel-arrow-icon">&#8249;</span>';
-      carousel.appendChild(prevBtn);
-
-      const nextBtn = document.createElement('button');
-      nextBtn.className = 'inkwell-carousel-arrow next'; nextBtn.setAttribute('aria-label', 'Next');
-      nextBtn.innerHTML = '<span class="inkwell-carousel-arrow-icon">&#8250;</span>';
-      carousel.appendChild(nextBtn);
-
-      const dots = document.createElement('div'); dots.className = 'inkwell-carousel-dots';
-      this.images.forEach((_, idx) => {
-        const dot = document.createElement('button');
-        dot.className = 'inkwell-carousel-dot' + (idx === 0 ? ' active' : '');
-        dot.setAttribute('data-dot', idx); dot.setAttribute('aria-label', 'Slide ' + (idx+1));
-        dots.appendChild(dot);
-      });
-      carousel.appendChild(dots);
-
-      const counter = document.createElement('div');
-      counter.className = 'inkwell-carousel-counter'; counter.textContent = '1 / ' + this.images.length;
-      carousel.appendChild(counter);
-
-      CarouselManager.goTo(carousel, 0);
+      // Build carousel via BlockRenderer
+      const source = this.images.map(img => '![' + img.alt + '](' + img.src + ')').join('\n');
+      const block = { type: 'image-group', content: source };
+      const renderer = ExtensionRegistry.findBlockRenderer(block);
+      const root = renderer ? ExtensionRegistry.renderBlock(block, renderer) : null;
+      if (!root) return;
 
       if (this._insertAfterNode && this._insertAfterNode.parentNode === editor) {
-        this._insertAfterNode.parentNode.insertBefore(carousel, this._insertAfterNode.nextSibling);
+        this._insertAfterNode.parentNode.insertBefore(root, this._insertAfterNode.nextSibling);
       } else {
-        editor.appendChild(carousel);
+        editor.appendChild(root);
       }
       const p = document.createElement('p'); p.innerHTML = '<br>';
-      carousel.parentNode.insertBefore(p, carousel.nextSibling);
+      root.parentNode.insertBefore(p, root.nextSibling);
       const range = document.createRange(); range.setStart(p, 0); range.collapse(true);
       const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
 
-      const event = new Event('input', { bubbles: true }); editor.dispatchEvent(event);
+      Editor.ensureEdgeGaps();
+      Editor.onContentChange();
     },
 
     close() {
