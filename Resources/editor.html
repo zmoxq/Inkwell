@@ -2422,6 +2422,114 @@
   })();
 
   // ----------------------------------------------------------
+  // Built-in extension: image-group (carousel) — Phase 3.5-B
+  // ----------------------------------------------------------
+  (function registerImageGroup() {
+    if (typeof window.ExtensionRegistry === 'undefined') return;
+
+    function parseImageLines(content) {
+      const images = [];
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+        if (m) images.push({ alt: m[1], src: m[2] });
+      }
+      return images;
+    }
+
+    function buildCarouselDOM(images) {
+      const carousel = document.createElement('div');
+      carousel.className = 'inkwell-carousel';
+      carousel.setAttribute('data-carousel', '');
+      carousel.setAttribute('data-count', images.length);
+      carousel.setAttribute('data-current', '0');
+
+      const track = document.createElement('div');
+      track.className = 'inkwell-carousel-track';
+      images.forEach((img, idx) => {
+        const slide = document.createElement('div');
+        slide.className = 'inkwell-carousel-slide';
+        slide.setAttribute('data-index', idx);
+        const imgEl = document.createElement('img');
+        imgEl.src = img.src;
+        imgEl.alt = img.alt;
+        slide.appendChild(imgEl);
+        track.appendChild(slide);
+      });
+      carousel.appendChild(track);
+
+      const prevBtn = document.createElement('button');
+      prevBtn.className = 'inkwell-carousel-arrow prev';
+      prevBtn.setAttribute('aria-label', 'Previous');
+      const prevIcon = document.createElement('span');
+      prevIcon.className = 'inkwell-carousel-arrow-icon';
+      prevIcon.textContent = '‹';
+      prevBtn.appendChild(prevIcon);
+      carousel.appendChild(prevBtn);
+
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'inkwell-carousel-arrow next';
+      nextBtn.setAttribute('aria-label', 'Next');
+      const nextIcon = document.createElement('span');
+      nextIcon.className = 'inkwell-carousel-arrow-icon';
+      nextIcon.textContent = '›';
+      nextBtn.appendChild(nextIcon);
+      carousel.appendChild(nextBtn);
+
+      const dots = document.createElement('div');
+      dots.className = 'inkwell-carousel-dots';
+      images.forEach((_, idx) => {
+        const dot = document.createElement('button');
+        dot.className = 'inkwell-carousel-dot' + (idx === 0 ? ' active' : '');
+        dot.setAttribute('data-dot', idx);
+        dot.setAttribute('aria-label', 'Slide ' + (idx + 1));
+        dots.appendChild(dot);
+      });
+      carousel.appendChild(dots);
+
+      const counter = document.createElement('div');
+      counter.className = 'inkwell-carousel-counter';
+      counter.textContent = '1 / ' + images.length;
+      carousel.appendChild(counter);
+
+      return carousel;
+    }
+
+    ExtensionRegistry.registerBlock({
+      name: 'image-group',
+      type: 'image-group',
+      editStyle: 'none',
+      capabilities: { rerenderOn: [] },
+
+      match(block) {
+        return block.type === 'image-group';
+      },
+
+      render(block, ctx) {
+        const images = parseImageLines(block.content);
+        if (images.length < 2) return null;
+
+        const root = ctx.createBlockRoot({
+          renderer: 'image-group',
+          sourceMarkdown: block.content,
+          language: '',
+          editStyle: 'none'
+        });
+
+        const out = root.querySelector('.renderer-output');
+        const carousel = buildCarouselDOM(images);
+        out.appendChild(carousel);
+
+        if (typeof CarouselManager !== 'undefined') {
+          CarouselManager.goTo(carousel, 0);
+        }
+
+        return root;
+      }
+    });
+  })();
+
+  // ----------------------------------------------------------
   // Markdown Parser: Markdown → HTML
   // ----------------------------------------------------------
   const MarkdownParser = {
