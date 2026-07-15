@@ -2647,7 +2647,7 @@
             i++;
           }
           if (images.length === 1) {
-            html += '<p><img src="' + images[0].src + '" alt="' + images[0].alt + '"></p>\n';
+            html += '<p><img src="' + this.escapeHtml(images[0].src) + '" alt="' + this.escapeHtml(images[0].alt) + '"></p>\n';
           } else {
             // Build carousel
             const slides = images.map((img, idx) =>
@@ -2679,17 +2679,19 @@
 
     parseInline(text) {
       if (!text) return '';
+      text = this.escapeHtml(text);
       text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
-      text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, linkText, href) => {
+        if (!this._isSafeHref(href)) return linkText;
+        return '<a href="' + href + '" target="_blank">' + linkText + '</a>';
+      });
       text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
       text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
       text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
       text = text.replace(/_(.+?)_/g, '<em>$1</em>');
       text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
-      // Inline code:内容必须 HTML-escape,否则 `<script>` `<style>` 等
-      // 字面量会让浏览器进入特殊解析模式吞掉之后的内容(<code> 不是 raw text 元素)
-      text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + this.escapeHtml(code) + '</code>');
+      text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + code + '</code>');
       // Inline extensions（==highlight== 等）— PR 1 引入
       if (typeof ExtensionRegistry !== 'undefined') {
         text = ExtensionRegistry.applyInlineToHTML(text);
@@ -2704,6 +2706,15 @@
     escapeHtml(text) {
       const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
       return text.replace(/[&<>"']/g, c => map[c]);
+    },
+
+    _isSafeHref(href) {
+      const stripped = href.replace(/[\x00-\x1f\x7f]/g, '').trim();
+      const schemeMatch = stripped.match(/^[a-z][a-z0-9+.-]*:/i);
+      if (!schemeMatch) return true;
+      const scheme = schemeMatch[0].toLowerCase();
+      return scheme === 'http:' || scheme === 'https:' ||
+             scheme === 'mailto:' || scheme === 'inkwell-asset:';
     },
 
     escapeAttr(text) {
