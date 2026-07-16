@@ -134,3 +134,11 @@ V1 实现范围:Inkwell 是唯一写入方,并发实际不存在,故只实现第
 **附件耦合的实测结论与决策**:普通图片经 WebView base URL(笔记所在目录)相对解析,与笔记文件名零耦合,同目录改名不断;`readLocalFile` 桥(现用户仅 stockchart 本地 CSV)因 D.15 的 `<docname>/` 前缀契约,改名后重开笔记即断(live session 内 coordinator 持旧 URL,暂不受影响)。决策:rename 不设障碍,此限制如实记录;修复归属 resolver 契约层(前缀基准由文件名改为目录),属 Phase 3 安全设计变更,单独立项。改名后附件文件夹保持旧名,功能完好,仅命名耦合失效——新旧附件可能分居两个文件夹。
 
 **已知陈旧项(不处理)**:`recentFiles` 中的旧 URL 在改名/删除后不同步(应用外操作同样触发的既有问题)。
+
+### PR 3 — 孤儿扫描与重绑(2026-07-16)
+
+实现:`Models/OrphanSidecarScanner.swift`(无状态,单次全库枚举),挂接于 `workingDirectory` didSet,跑在 utility 后台队列,结果只记 log。
+
+按契约 §2 原文实现:sidecar 判定 = 去 `.json` 后缀以 `.md` 结尾(`.tmp-` 残留天然不命中);无孤儿即返回、零哈希成本;候选(无 sidecar 的 .md)全库范围、每个只哈希一次、可跨子目录配对;唯一命中走 `FileManager.moveItem` 纯 rename,字节零修改(因此不受 schemaVersion 只读限制约束——只读约束的是内容写入);多命中/零命中/孤儿自身 contentHash 不可读 → 静置 + log。
+
+**同轮碰撞防御**:两个内容相同的孤儿唯一命中同一候选时,顺序处理 + 重绑前 `fileExists` 检查 + 命中后从候选表移除,保证恰好一个获得命名位、另一个静置。「目标命名位必空」的契约推理由此从推理升级为代码保证。
