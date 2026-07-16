@@ -278,6 +278,61 @@ class AppState: ObservableObject {
         }
     }
     
+    // MARK: - File management (rename / delete)
+
+    /// Renames a note in place (same directory). Returns the new URL.
+    ///
+    /// Ordering: unsaved changes are saved to the OLD path first, then the
+    /// pair is moved. Disk state is complete before the move, the sidecar
+    /// contentHash recorded at save matches the bytes being moved, and a
+    /// failed move leaves everything intact at the old path.
+    @discardableResult
+    func renameNote(at url: URL, to newName: String) throws -> URL {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return url }
+        let fileName = trimmed.lowercased().hasSuffix(".md") ? trimmed : trimmed + ".md"
+        let destination = url.deletingLastPathComponent().appendingPathComponent(fileName)
+        guard destination != url else { return url }
+
+        let openDoc = openTabs.first { $0.url == url }
+        if let doc = openDoc, doc.isDirty {
+            try NoteFileOperations.saveNote(content: doc.content, to: url)
+            doc.isDirty = false
+        }
+        try NoteFileOperations.renameNote(from: url, to: destination)
+        openDoc?.url = destination
+        refreshFileTree()
+        return destination
+    }
+
+    /// Moves a note (and its sidecar) to the trash and closes its tab if
+    /// open — discarding unsaved changes, since saving them would resurrect
+    /// the file at the path just trashed.
+    func deleteNote(at url: URL) throws {
+        try NoteFileOperations.trashNote(at: url)
+        if let idx = openTabs.firstIndex(where: { $0.url == url }) {
+            let doc = openTabs[idx]
+            openTabs.remove(at: idx)
+            if activeTabId == doc.id {
+                if openTabs.isEmpty {
+                    activeTabId = nil
+                } else {
+                    let newIdx = min(idx, openTabs.count - 1)
+                    activeTabId = openTabs[newIdx].id
+                    updateOutline(from: openTabs[newIdx].content)
+                }
+            }
+        }
+        refreshFileTree()
+    }
+
+    private func refreshFileTree() {
+        if let dir = workingDirectory {
+            loadFilesFromDirectory(dir)
+            buildFileTree(from: dir)
+        }
+    }
+
     private func addToRecent(_ url: URL) {
         recentFiles.removeAll { $0.url == url }
         recentFiles.insert(FileItem(url: url, isDirectory: false, modificationDate: Date()), at: 0)

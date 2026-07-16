@@ -5,7 +5,9 @@ import Combine
 
 class MarkdownDocument: ObservableObject, Identifiable {
     let id = UUID()
-    let url: URL
+    /// Mutable so an in-app rename can repoint the open tab; published so
+    /// tab titles and window titles (derived from `url`) update reactively.
+    @Published var url: URL
     @Published var content: String
     @Published var isDirty: Bool = false
     
