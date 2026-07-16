@@ -2887,8 +2887,16 @@
           const codeEl = node.querySelector('code');
           const blockType = node.getAttribute('data-block-type');
           if (blockType === 'display-math') {
-            const content = (codeEl ? codeEl.textContent : node.textContent).replace(/^\n|\n$/g, '');
-            return '$$\n' + content + '\n$$\n\n';
+            // A display-math editing fence carries its own $$ delimiters in
+            // the text (2026-07-16). Emit verbatim — re-wrapping here would
+            // double-wrap on a mid-edit save. Defensive: if the delimiters
+            // are missing (legacy DOM shape), wrap as before.
+            const text = (codeEl ? codeEl.textContent : node.textContent).replace(/^\n|\n$/g, '');
+            const tLines = text.split('\n');
+            const hasDelims = tLines.length >= 2 &&
+              tLines[0].trim() === '$$' &&
+              tLines[tLines.length - 1].trim() === '$$';
+            return (hasDelims ? text : '$$\n' + text + '\n$$') + '\n\n';
           }
           let lang = node.getAttribute('data-language') || '';
           if (!lang && codeEl) {
@@ -5118,7 +5126,12 @@
       if (mathMatch) {
         blockType = 'display-math';
         lang = '';
-        inner = mathMatch[1];
+        // Editing state shows the full source INCLUDING the $$ delimiters
+        // (2026-07-16 decision): the delimiters are visible and editable,
+        // matching what the .md actually contains. _doLeaveEdit parses them
+        // back out; a block whose delimiters were edited away degrades to
+        // plain paragraphs.
+        inner = source;
       } else {
         blockType = 'fenced-code';
         const fenceMatch = source.match(/^```(\S*)/);
@@ -5185,8 +5198,24 @@
       // Construct block descriptor matching the registry's expected format
       let block;
       if (blockType === 'display-math') {
-        const raw = '$$\n' + content + '\n$$';
-        block = { type: 'display-math', content: content, raw: raw };
+        // Editing text carries its own $$ delimiters (2026-07-16). Parse
+        // them back out; if the user edited them away, the block is no
+        // longer display math — degrade to plain paragraphs (mirrors the
+        // fenced-code precedent: unregistered language degrades to plain
+        // code block; the user's edit changes the block's identity).
+        const lines = content.split('\n');
+        const delimitersIntact = lines.length >= 2 &&
+          lines[0].trim() === '$$' &&
+          lines[lines.length - 1].trim() === '$$';
+        if (!delimitersIntact) {
+          this._degradeToParagraphs(fenceEl, content);
+          return;
+        }
+        block = {
+          type: 'display-math',
+          content: lines.slice(1, -1).join('\n'),
+          raw: content
+        };
       } else {
         block = { type: 'fenced-code', language: lang, content: content };
       }
@@ -5223,6 +5252,44 @@
         this.editor.highlightCodeBlocks();
         this.editor.onContentChange();
       }
+    },
+
+    /// Replaces an editing fence with plain paragraphs, one per line
+    /// (blank lines become empty <p><br>). Used when the user edits away
+    /// a block's identity markers ($$ delimiters) — the disk then gets
+    /// exactly the text they left behind.
+    _degradeToParagraphs(fenceEl, text) {
+      const frag = document.createDocumentFragment();
+      const lines = text.split('\n');
+      let lastP = null;
+      lines.forEach(line => {
+        const p = document.createElement('p');
+        if (line.trim() === '') {
+          p.innerHTML = '<br>';
+        } else {
+          p.textContent = line;
+        }
+        frag.appendChild(p);
+        lastP = p;
+      });
+      if (!lastP) {
+        const p = document.createElement('p');
+        p.innerHTML = '<br>';
+        frag.appendChild(p);
+        lastP = p;
+      }
+      if (!fenceEl.parentNode) return;
+      fenceEl.parentNode.replaceChild(frag, fenceEl);
+      this._editingFence = null;
+      // Keep the caret in the flow: place it at the end of the last line.
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(lastP);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      this.editor.ensureEdgeGaps();
+      this.editor.onContentChange();
     },
 
     isEditing() {
