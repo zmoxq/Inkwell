@@ -5680,6 +5680,10 @@
 
     applyTheme(css) {
       document.getElementById('theme-style').textContent = css;
+      // In-app theme switch is a theme-change too: renderers that bake
+      // colors at render time (stockchart canvas, mermaid) must redraw.
+      // Without this, only the system light/dark switch notified them.
+      this._notifyRerender('theme-change');
     },
 
     // --- Keyboard Shortcuts ---
