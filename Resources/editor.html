@@ -3121,6 +3121,36 @@
         return true;
       }
 
+      // --- Display math block: $$
+      // Live-input path for display math (closes the Phase 3.5 §9
+      // acceptance gap: "现场输入 math 围栏" had no LiveConverter rule, so
+      // typing $$ never converted until a file reload). A line containing
+      // exactly $$ + Enter becomes a display-math editing fence. The fence
+      // text carries BOTH delimiters (2026-07-16 contract) with the caret
+      // on the empty line between them; leave-edit parsing, rendering and
+      // the degrade-to-paragraphs semantics are reused unchanged.
+      if (text.trim() === '$$') {
+        e.preventDefault();
+        const pre = document.createElement('pre');
+        pre.setAttribute('data-block-type', 'display-math');
+        const code = document.createElement('code');
+        code.className = 'inkwell-live-fence';
+        code.textContent = '$$\n\n$$';
+        pre.appendChild(code);
+        block.parentNode.replaceChild(pre, block);
+        EditMode._editingFence = pre;
+        this.editor.ensureEdgeGaps();
+        // Caret on the empty middle line (right after "$$\n")
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.setStart(code.firstChild, 3);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        this.editor.onContentChange();
+        return true;
+      }
+
       // --- Blockquote: >
       if (/^>\s/.test(text)) {
         e.preventDefault();
