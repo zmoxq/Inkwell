@@ -144,3 +144,11 @@ V1 实现范围:Inkwell 是唯一写入方,并发实际不存在,故只实现第
 按契约 §2 原文实现:sidecar 判定 = 去 `.json` 后缀以 `.md` 结尾(`.tmp-` 残留天然不命中);无孤儿即返回、零哈希成本;候选(无 sidecar 的 .md)全库范围、每个只哈希一次、可跨子目录配对;唯一命中走 `FileManager.moveItem` 纯 rename,字节零修改(因此不受 schemaVersion 只读限制约束——只读约束的是内容写入);多命中/零命中/孤儿自身 contentHash 不可读 → 静置 + log。
 
 **同轮碰撞:从先到先得修正为双向唯一(2026-07-16 二次修复)**。首版实现对「两个相同孤儿争一个候选」采用先到先得——顺序处理 + `fileExists` 防御,恰好一个获胜。实现审查指出这是契约漏洞:两孤儿 contentHash 相同,但 user/ai 层内容可能不同,先到先得等于随机把一份元数据绑到候选正文上,正是 §2「错配比丢失更糟」要排除的情形;§2 原文只规定了孤儿→候选方向的唯一性,对称方向是盲区。修复:匹配改为三阶段(收集全部命中关系 → 检查双向唯一 → 统一执行重绑,不边扫边绑),候选被多个孤儿命中时涉事孤儿全部静置、记 ambiguous。§2 与 §5 决策表已同步补齐。「目标命名位必空」由候选定义 + 双向唯一保证,`fileExists` 检查降级为纯防御。
+
+### PR 4 — 标签 UI + 只读提示(2026-07-16,Phase 4 收官)
+
+实现:`Views/TagBarView.swift`,钉在 toolbar 与 WKWebView 之间的固定高度(30pt)chip 行,正文从其下方滚动穿过,editor.html 零改动。磁盘为真相:切 tab(编辑区 `.id(doc.id)` 整块重建)与 rename(观察 `document.url`)时重读 sidecar;增删经 `SidecarStore.setTags`(首个标签触发惰性创建),乐观更新、写盘失败回滚 + 行内提示。空态形态:极淡 tag glyph(~25% opacity)常驻,行 hover 显形并出现 Add Tag 文案,行高恒定无跳动。
+
+只读态(schemaVersion > 1):chips 照常显示、编辑禁用,锁图标 + 无术语提示 "Created by a newer version of Inkwell — view only.";损坏态同样禁用,警告图标 + "This note's extra info couldn't be read."。提示语言随现有 UI 用英文。
+
+**V1 清单(§6)至此全部完成**:惰性创建读写(PR 1)、保存钩子(PR 2)、改名/删除同步搬移 + UI(PR 2/2.5)、孤儿扫描重绑(PR 3)、标签 UI 与只读提示(PR 4)。
