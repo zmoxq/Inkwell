@@ -203,7 +203,7 @@ class AppState: ObservableObject {
         // Save if dirty before closing
         let doc = openTabs[idx]
         if doc.isDirty {
-            try? doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+            try? NoteFileOperations.saveNote(content: doc.content, to: doc.url)
         }
         
         openTabs.remove(at: idx)
@@ -227,7 +227,7 @@ class AppState: ObservableObject {
         let toClose = openTabs.filter { $0.id != docId }
         for doc in toClose {
             if doc.isDirty {
-                try? doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+                try? NoteFileOperations.saveNote(content: doc.content, to: doc.url)
             }
         }
         openTabs.removeAll { $0.id != docId }
@@ -237,7 +237,7 @@ class AppState: ObservableObject {
     func closeAllTabs() {
         for doc in openTabs {
             if doc.isDirty {
-                try? doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+                try? NoteFileOperations.saveNote(content: doc.content, to: doc.url)
             }
         }
         openTabs.removeAll()
@@ -247,7 +247,7 @@ class AppState: ObservableObject {
     func saveCurrentDocument() {
         guard let doc = currentDocument else { return }
         do {
-            try doc.content.write(to: doc.url, atomically: true, encoding: .utf8)
+            try NoteFileOperations.saveNote(content: doc.content, to: doc.url)
             doc.isDirty = false
         } catch {
             print("[Inkwell] Error saving file: \(error.localizedDescription)")
