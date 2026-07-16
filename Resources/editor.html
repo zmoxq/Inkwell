@@ -1369,13 +1369,30 @@
 
         // 把语言标签放到 pre 元素上，给 CSS 选择器用
         const langMatch = block.className.match(/language-(\w+)/);
-        if (langMatch) {
-          block.closest('pre').setAttribute('data-language', langMatch[1]);
+        const declaredLang = langMatch ? langMatch[1] : null;
+        if (declaredLang) {
+          block.closest('pre').setAttribute('data-language', declaredLang);
         }
 
         try {
           hljs.highlightElement(block);
         } catch (e) { /* 语言不支持，忽略 */ }
+
+        // Source authority: when the author declared no language, hljs
+        // auto-detects one and writes language-<guess> onto the element. The
+        // serializer reads that class to emit the fence language, so leaving
+        // the guess in the DOM fabricates a language in the user's .md — a
+        // plain ``` fence came back as ```ruby. The guess is a display-layer
+        // artifact and must never reach serialization; colors come from the
+        // injected .hljs-* child spans, so dropping the class costs nothing
+        // visually. Stripping on every pass (not just the first) keeps the DOM
+        // free of the guess, so a re-decorate on theme change still sees the
+        // author's "no language declared" state.
+        if (!declaredLang) {
+          Array.from(block.classList).forEach(c => {
+            if (c.startsWith('language-')) block.classList.remove(c);
+          });
+        }
       }
     });
 
