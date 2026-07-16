@@ -125,4 +125,28 @@ struct NoteFileOperationsTests {
             #expect(try Data(contentsOf: orphan) == ourSidecarBytes)
         }
     }
+
+    // MARK: - Delete (§6)
+
+    @Test func trashRemovesBothFilesFromDirectory() throws {
+        try withTempDir { dir in
+            let md = dir.appendingPathComponent("note.md")
+            try Data("x".utf8).write(to: md)
+            try SidecarStore.setTags(["a"], forMarkdownAt: md)
+
+            try NoteFileOperations.trashNote(at: md)
+
+            #expect(!exists(md))
+            #expect(!exists(SidecarStore.sidecarURL(forMarkdownAt: md)))
+        }
+    }
+
+    @Test func trashWithoutSidecarRemovesMarkdownOnly() throws {
+        try withTempDir { dir in
+            let md = dir.appendingPathComponent("note.md")
+            try Data("x".utf8).write(to: md)
+            try NoteFileOperations.trashNote(at: md)
+            #expect(!exists(md))
+        }
+    }
 }

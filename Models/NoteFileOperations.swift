@@ -64,4 +64,19 @@ enum NoteFileOperations {
             try fm.moveItem(at: sourceSidecar, to: destinationSidecar)
         }
     }
+
+    // MARK: - Delete (§6 in-app delete)
+
+    /// Moves the note and its sidecar (if any) to the system trash
+    /// together. Sidecar goes first: if that fails the note stays intact
+    /// with its metadata; if the .md step then fails, the sidecar is
+    /// recoverable from the trash.
+    static func trashNote(at url: URL) throws {
+        let fm = FileManager.default
+        let sidecar = SidecarStore.sidecarURL(forMarkdownAt: url)
+        if fm.fileExists(atPath: sidecar.path) {
+            try fm.trashItem(at: sidecar, resultingItemURL: nil)
+        }
+        try fm.trashItem(at: url, resultingItemURL: nil)
+    }
 }
