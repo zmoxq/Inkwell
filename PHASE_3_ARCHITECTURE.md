@@ -407,6 +407,14 @@ editor.html 引用方式:
 
 详见 `docs/WEBASSETS.md`。
 
+### highlight.js 本地化(2026-07-16)
+
+Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 cdnjs 活外链**(`<link id="hljs-theme">` + `<script>`,pin 在 11.11.1),`updateDarkModeTheme()` 还会把 `#hljs-theme` 的 href 改写到另一个 cdnjs 地址。这是零外部依赖底线的破口,且断网时代码高亮完全无样式。
+
+修复:三个文件 vendored 进 `WebAssets/highlight/`,经 `inkwell-asset:///highlight/` 加载,与 mermaid/katex/lightweight-charts 同一模式;`updateDarkModeTheme()` 的 base 改为 `inkwell-asset:///highlight/`,深浅切换在两个本地 CSS 间进行。版本严格沿用原 pin 的 11.11.1(文件内 `versionString="11.11.1"` 已核对),只改交付方式不改版本。三个文件自包含:CSS 无 `url()`/`@import`,JS 无网络请求。**至此 editor.html 无任何活外部引用**(残留的 https 字符串均为代码注释与 URL 输入框 placeholder)。
+
+命名位注意:synchronized groups 把子目录平铺进 Bundle 资源根,`github.min.css` / `github-dark.min.css` / `highlight.min.js` 靠 handler 的 basename fallback 命中——与 `katex.min.css` 同一条路径,无新机制。
+
 ---
 
 ## 十一、与图片附件系统的关系
@@ -533,6 +541,7 @@ editor.html 引用方式:
 | `Inkwell/Editor/MarkdownEditorView.swift` | extensionError channel + scheme handler 注册 |
 | `Inkwell/Editor/InkwellAssetSchemeHandler.swift` | `inkwell-asset://` 服务实现 |
 | `Inkwell/Resources/WebAssets/mermaid.min.js` | Mermaid 库 |
+| `Inkwell/Resources/WebAssets/highlight/` | highlight.js 11.11.1 + github / github-dark 主题 CSS(2026-07-16 本地化) |
 | `Inkwell/Resources/WebAssets/manifest.json` | 资产版本台账 |
 | `docs/WEBASSETS.md` | 资产管理流程文档 |
 | `tests/mermaid-smoke.md` | Mermaid 烟雾测试 |
