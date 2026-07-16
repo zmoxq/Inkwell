@@ -53,6 +53,8 @@ struct TagBarView: View {
                 } else {
                     addButton
                 }
+            } else {
+                accessNotice
             }
 
             if saveFailed {
@@ -96,6 +98,38 @@ struct TagBarView: View {
         }
         .buttonStyle(.plain)
         .help("Add Tag")
+    }
+
+    /// Shown instead of the add button when the sidecar can't be edited.
+    /// Jargon-free: the user never needs to know what a sidecar is.
+    private var accessNotice: some View {
+        HStack(spacing: 4) {
+            Image(systemName: iconForAccess)
+                .font(.system(size: 10))
+            if isRowHovered {
+                Text(noticeForAccess)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(.secondary.opacity(isRowHovered ? 1.0 : 0.5))
+        .help(noticeForAccess)
+    }
+
+    private var iconForAccess: String {
+        if case .readOnly = access { return "lock" }
+        return "exclamationmark.triangle"
+    }
+
+    private var noticeForAccess: String {
+        switch access {
+        case .readOnly:
+            return "Created by a newer version of Inkwell — view only."
+        case .unreadable:
+            return "This note's extra info couldn't be read."
+        case .writable:
+            return ""
+        }
     }
 
     private var addField: some View {
