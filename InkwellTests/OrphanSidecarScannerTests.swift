@@ -188,21 +188,26 @@ struct OrphanSidecarScannerTests {
         }
     }
 
-    // MARK: - Same-pass collision
+    // MARK: - Bidirectional uniqueness
 
-    @Test func twoIdenticalOrphansCannotClaimOneCandidate() throws {
+    @Test func candidateClaimedByMultipleOrphansLeavesAllInPlace() throws {
         try withTempDir { dir in
             let md = dir.appendingPathComponent("note.md")
             try Data("shared".utf8).write(to: md)
-            try makeOrphan(in: dir, named: "one.md.json", matching: "shared")
-            try makeOrphan(in: dir, named: "two.md.json", matching: "shared")
+            let (oneURL, oneBytes) = try makeOrphan(in: dir, named: "one.md.json", matching: "shared")
+            let (twoURL, twoBytes) = try makeOrphan(in: dir, named: "two.md.json", matching: "shared")
 
             let result = OrphanSidecarScanner.scan(libraryRoot: dir)
 
-            // Exactly one wins the name; the other is left in place.
-            #expect(result.rebound.count == 1)
-            #expect(result.unmatched.count == 1)
-            #expect(exists(SidecarStore.sidecarURL(forMarkdownAt: md)))
+            // Same hash, but the user/ai layers may differ — first-come-
+            // first-served would bind arbitrary metadata to the note.
+            // Uniqueness must hold in both directions: nobody rebinds.
+            #expect(result.rebound.isEmpty)
+            #expect(Set(result.ambiguous) == [oneURL, twoURL])
+            #expect(result.unmatched.isEmpty)
+            #expect(!exists(SidecarStore.sidecarURL(forMarkdownAt: md)))
+            #expect(try Data(contentsOf: oneURL) == oneBytes)
+            #expect(try Data(contentsOf: twoURL) == twoBytes)
         }
     }
 }

@@ -73,6 +73,8 @@ enum OrphanSidecarScanner {
             candidatesByHash[contentHash(data), default: []].append(md)
         }
 
+        // Phase 1: resolve each orphan to matches; collect, don't rebind yet.
+        var pendingRebinds: [(orphan: URL, candidate: URL)] = []
         for orphan in orphans {
             guard let data = try? Data(contentsOf: orphan),
                   let document = SidecarDocument(jsonData: data),
@@ -84,24 +86,42 @@ enum OrphanSidecarScanner {
             let candidates = candidatesByHash[hash] ?? []
             switch candidates.count {
             case 1:
-                let destination = SidecarStore.sidecarURL(forMarkdownAt: candidates[0])
-                // Candidates are sidecar-less by definition, so the name is
-                // free — but guard anyway (e.g. an identical-hash orphan
-                // rebound earlier in this pass).
-                if !fm.fileExists(atPath: destination.path),
-                   (try? fm.moveItem(at: orphan, to: destination)) != nil {
-                    result.rebound.append((orphan: orphan, destination: destination))
-                    candidatesByHash[hash] = []
-                } else {
-                    print("[Inkwell] Orphan sidecar rebind destination unavailable, leaving in place: \(orphan.path)")
-                    result.unmatched.append(orphan)
-                }
+                pendingRebinds.append((orphan: orphan, candidate: candidates[0]))
             case 0:
                 print("[Inkwell] Orphan sidecar has no content match, leaving in place: \(orphan.path)")
                 result.unmatched.append(orphan)
             default:
                 print("[Inkwell] Orphan sidecar matches \(candidates.count) identical notes, leaving in place: \(orphan.path)")
                 result.ambiguous.append(orphan)
+            }
+        }
+
+        // Phase 2: uniqueness must hold in BOTH directions. A candidate
+        // claimed by multiple orphans means identical content hashes but
+        // potentially different user/ai layers — picking one is a coin-flip
+        // mis-pairing, which the contract rates worse than loss. All
+        // claimants stand down.
+        var claimCounts: [URL: Int] = [:]
+        for pending in pendingRebinds {
+            claimCounts[pending.candidate, default: 0] += 1
+        }
+
+        // Phase 3: execute the rebinds that survived both checks.
+        for pending in pendingRebinds {
+            guard claimCounts[pending.candidate] == 1 else {
+                print("[Inkwell] Candidate note claimed by multiple orphan sidecars, leaving in place: \(pending.orphan.path)")
+                result.ambiguous.append(pending.orphan)
+                continue
+            }
+            let destination = SidecarStore.sidecarURL(forMarkdownAt: pending.candidate)
+            // Candidates are sidecar-less by definition and claims are now
+            // unique, so the name is free — guard purely defensively.
+            if !fm.fileExists(atPath: destination.path),
+               (try? fm.moveItem(at: pending.orphan, to: destination)) != nil {
+                result.rebound.append((orphan: pending.orphan, destination: destination))
+            } else {
+                print("[Inkwell] Orphan sidecar rebind destination unavailable, leaving in place: \(pending.orphan.path)")
+                result.unmatched.append(pending.orphan)
             }
         }
         return result
