@@ -115,6 +115,10 @@ struct ContentView: View {
                     )
                 }
                 
+                // Tag chip row (Phase 4 PR 4) — pinned above the editor,
+                // content scrolls beneath it
+                TagBarView(document: doc)
+
                 // Editor
                 MarkdownEditorView(
                     markdownContent: $editingContent,
