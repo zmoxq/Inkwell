@@ -8,6 +8,11 @@ struct SidebarView: View {
     @Binding var selectedFile: FileItem?
     @State private var searchText: String = ""
     @State private var isSearching: Bool = false
+
+    // Rename/delete UI state
+    @State private var renameTarget: URL? = nil
+    @State private var renameText: String = ""
+    @State private var fileErrorMessage: String? = nil
     
     // Typora's accent color (teal/green)
     private let accentTeal = Color(red: 0.31, green: 0.78, blue: 0.65) // #4FC7A5
@@ -30,6 +35,30 @@ struct SidebarView: View {
         #else
         .background(Color(uiColor: .systemBackground))
         #endif
+        .alert("Rename Note", isPresented: isRenamePresented) {
+            TextField("Name", text: $renameText)
+            Button("Rename") { performRename() }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+        }
+        .alert("Couldn't Complete", isPresented: isErrorPresented) {
+            Button("OK", role: .cancel) { fileErrorMessage = nil }
+        } message: {
+            Text(fileErrorMessage ?? "")
+        }
+    }
+
+    private var isRenamePresented: Binding<Bool> {
+        Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )
+    }
+
+    private var isErrorPresented: Binding<Bool> {
+        Binding(
+            get: { fileErrorMessage != nil },
+            set: { if !$0 { fileErrorMessage = nil } }
+        )
     }
     
     // MARK: - Top Bar (FILES / OUTLINE title, toggle + search)
@@ -125,7 +154,9 @@ struct SidebarView: View {
                             node: node,
                             selectedFile: $selectedFile,
                             accentColor: accentTeal,
-                            depth: 0
+                            depth: 0,
+                            onRename: beginRename,
+                            onDelete: deleteNote
                         )
                     }
                 }
@@ -277,6 +308,40 @@ struct SidebarView: View {
         #endif
     }
     
+    private func beginRename(_ url: URL) {
+        renameText = url.deletingPathExtension().lastPathComponent
+        renameTarget = url
+    }
+
+    private func performRename() {
+        guard let target = renameTarget else { return }
+        renameTarget = nil
+        let newName = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty else { return }
+        do {
+            let newURL = try appState.renameNote(at: target, to: newName)
+            if selectedFile?.url == target {
+                selectedFile = FileItem(url: newURL, isDirectory: false, modificationDate: Date())
+            }
+        } catch NoteFileOperations.OperationError.destinationExists {
+            let fileName = newName.lowercased().hasSuffix(".md") ? newName : newName + ".md"
+            fileErrorMessage = "A file named \u{201C}\(fileName)\u{201D} already exists in this folder."
+        } catch {
+            fileErrorMessage = "The note couldn't be renamed."
+        }
+    }
+
+    private func deleteNote(_ url: URL) {
+        do {
+            try appState.deleteNote(at: url)
+            if selectedFile?.url == url {
+                selectedFile = nil
+            }
+        } catch {
+            fileErrorMessage = "The note couldn't be moved to the Trash."
+        }
+    }
+
     private func setExpandedAll(_ expanded: Bool) {
         func walk(_ nodes: [FileNode]) {
             for node in nodes {
@@ -298,6 +363,10 @@ struct TyporaFileRow: View {
     @Binding var selectedFile: FileItem?
     let accentColor: Color
     let depth: Int
+    /// File-management actions, handled at the SidebarView level (alerts
+    /// and error presentation live there). Files only, not directories.
+    let onRename: (URL) -> Void
+    let onDelete: (URL) -> Void
     
     private var isSelected: Bool {
         guard let sel = selectedFile else { return false }
@@ -363,6 +432,13 @@ struct TyporaFileRow: View {
                     )
                 }
             }
+            .contextMenu {
+                if !node.isDirectory {
+                    Button("Rename\u{2026}") { onRename(node.url) }
+                    Divider()
+                    Button("Move to Trash", role: .destructive) { onDelete(node.url) }
+                }
+            }
             
             // Children
             if node.isDirectory && node.isExpanded {
@@ -371,7 +447,9 @@ struct TyporaFileRow: View {
                         node: child,
                         selectedFile: $selectedFile,
                         accentColor: accentColor,
-                        depth: depth + 1
+                        depth: depth + 1,
+                        onRename: onRename,
+                        onDelete: onDelete
                     )
                 }
             }
