@@ -44,6 +44,19 @@ class AppState: ObservableObject {
             if let dir = workingDirectory {
                 loadFilesFromDirectory(dir)
                 buildFileTree(from: dir)
+                scanForOrphanSidecars(in: dir)
+            }
+        }
+    }
+
+    /// Orphan-sidecar recovery on library open (§2). Runs off the main
+    /// thread; results are log-only and sidecars never appear in the file
+    /// tree, so no UI refresh is needed.
+    private func scanForOrphanSidecars(in directory: URL) {
+        DispatchQueue.global(qos: .utility).async {
+            let result = OrphanSidecarScanner.scan(libraryRoot: directory)
+            for pair in result.rebound {
+                print("[Inkwell] Rebound orphan sidecar: \(pair.orphan.lastPathComponent) -> \(pair.destination.lastPathComponent)")
             }
         }
     }
