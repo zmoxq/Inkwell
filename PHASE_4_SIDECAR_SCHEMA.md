@@ -133,6 +133,8 @@ V1 实现范围:Inkwell 是唯一写入方,并发实际不存在,故只实现第
 
 **附件耦合的实测结论与决策**:普通图片经 WebView base URL(笔记所在目录)相对解析,与笔记文件名零耦合,同目录改名不断;`readLocalFile` 桥(现用户仅 stockchart 本地 CSV)因 D.15 的 `<docname>/` 前缀契约,改名后重开笔记即断(live session 内 coordinator 持旧 URL,暂不受影响)。决策:rename 不设障碍,此限制如实记录;修复归属 resolver 契约层(前缀基准由文件名改为目录),属 Phase 3 安全设计变更,单独立项。改名后附件文件夹保持旧名,功能完好,仅命名耦合失效——新旧附件可能分居两个文件夹。
 
+> **已修复(2026-07-16,独立 resolver PR)**:D.15 修订为目录基准(见 PHASE_3_ARCHITECTURE.md §十一),`readLocalFile` 解析不再依赖笔记文件名,stockchart 本地 CSV 引用在 rename 后照常工作。上段保留作为当时决策的历史记录。
+
 **已知陈旧项(不处理)**:`recentFiles` 中的旧 URL 在改名/删除后不同步(应用外操作同样触发的既有问题)。
 
 ### PR 3 — 孤儿扫描与重绑(2026-07-16)
