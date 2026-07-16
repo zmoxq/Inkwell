@@ -430,6 +430,7 @@ editor.html 引用方式:
 1. 拒绝绝对路径(错误码 `invalidFilePrefix`,rawValue 与 JS 契约保持不变)
 2. 相对路径对笔记所在目录解析并规范化(`standardizedFileURL`)
 3. 规范化结果必须严格位于笔记所在目录内部——带尾斜杠前缀比较,空路径、`.`、任何 `../` 逃逸一律拒绝(错误码 `outsideAttachmentDir`)
+4. 包含检查对**符号链接解析后的真实路径**执行(基准与候选两侧同管线),返回值即解析后路径,读取与检查命中同一目标。目录内符号链接照常工作;指向目录外的符号链接(文件或文件夹)被拒——防止恶意 vault 借链接把读取走私出边界(2026-07-16 补)
 
 初版契约(已废止)要求路径以 `<docname>/` 开头且解析后留在同名附件目录内。废止原因:(a) 笔记 rename 后 `<docname>` 变化而正文引用不变,CSV 引用必断,而图片通道(WebView base URL = 笔记所在目录,`allowingReadAccessTo` 同样是目录)不受影响——两通道不对称,且 resolver 单方面收紧不构成真实安全边界:任何 `<img>` 早已能读同目录任意文件;(b) `<docname>` 派生逻辑对点开头文件名(`.md`)有未定义行为。目录基准下两通道对称、rename 天然安全(同目录改名不改目录,连 coordinator 持陈旧 documentURL 的 live session 也正确)。副作用如实记录:跨笔记引用(`other-note/AAPL.csv`)从被拒变为允许,与图片通道行为一致;per-note 隔离由此让位于 per-directory 隔离,真实安全边界(不出笔记目录、防穿越、拒绝绝对路径)强度不变。
 
