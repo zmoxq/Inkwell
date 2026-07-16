@@ -311,6 +311,22 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 | 窗口失活(切换应用) | `document.hasFocus()` 为 false → 不触发 `leaveEdit` |
 | 保存触发(`getMarkdown`) | serializer 直接序列化 fence 内容 → 无需 leave-edit |
 
+### 契约变更:display-math 编辑态含 `$$` 定界符
+
+**Commit**: `1f9e644`(2026-07-16,用户裁决)
+
+**原设计**(§5.1):display-math 进入编辑态时剥去 `$$`,`<pre>` 只装公式体;leave-edit 机械回包。
+
+**变更**:编辑态显示完整原文**含 `$$` 定界符行**——所见即 .md 所存。三处联动:
+
+1. `_doEnterEdit`:display-math 分支 `inner = source`(不再取 `mathMatch[1]`)
+2. `_doLeaveEdit`:从编辑文本解析定界符(首尾行 trim 后 === `$$`)还原 content;**定界符被编辑掉 → `_degradeToParagraphs` 逐行退化为普通段落**——与 fenced-code 先例同构(语言改为未注册值 → 退化为普通代码块):用户的编辑可以改变块身份,删 `$$` 即明确表达「这不再是公式」
+3. serializer `case 'pre'` display-math 分支:编辑态文本已自带定界符,原样输出(照旧回包会在编辑态中途保存时双包);防御性保留 legacy 回包分支(文本无定界符时)
+
+**验证**(harness,真实 parser/serializer):编辑态可见 `$$`;中途保存单包;改公式体后离开重渲染且 round-trip 逐字节干净;退化路径无 EditMode 残留状态;fenced-code enter/leave 无退化;两份冒烟文件无新增 diff。
+
+**连带裁决**(同日):KaTeX 只认 `$$...$$`,不支持 ```` ```katex ```` 围栏;渲染块不加 renderer 标识角标。
+
 ---
 
-*Document version: 1.5 — blur 语义收窄契约变更、Step 7 回归完成、serializer live-fence 修复、carousel ensureEdgeGaps 覆盖*
+*Document version: 1.6 — display-math 编辑态含 $$ 定界符契约变更(v1.5: blur 语义收窄、Step 7 回归、serializer live-fence 修复、carousel ensureEdgeGaps 覆盖)*
