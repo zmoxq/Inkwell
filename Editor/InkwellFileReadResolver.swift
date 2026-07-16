@@ -31,8 +31,9 @@ struct InkwellFileReadResolver {
     }
 
     /// Resolve `relativePath` against `documentURL`'s directory.
-    /// Does NOT touch the filesystem — only computes and validates the URL.
-    /// Caller is responsible for the actual file read.
+    /// Consults the filesystem only to resolve symlinks (existing path
+    /// components; nonexistent ones pass through unchanged). Caller is
+    /// responsible for the actual file read.
     static func resolve(relativePath: String, documentURL: URL) -> Result {
         // 1. Reject absolute paths outright.
         if relativePath.hasPrefix("/") {
@@ -47,15 +48,22 @@ struct InkwellFileReadResolver {
             .appendingPathComponent(relativePath)
             .standardizedFileURL
 
-        // 4. Containment: resolved must be strictly inside the note's
+        // 4. Resolve symlinks on BOTH sides before the containment check:
+        //    a symlink inside the directory must not smuggle the read
+        //    outside it. The returned URL is the resolved one, so the read
+        //    hits exactly the path that was checked.
+        let realBase = docDir.resolvingSymlinksInPath()
+        let realResolved = resolved.resolvingSymlinksInPath()
+
+        // 5. Containment: resolved must be strictly inside the note's
         //    directory. Trailing-slash comparison avoids prefix confusion
         //    (/a/b vs /a/bc) and rejects the directory itself (empty path,
         //    "." and full ../ round-trips all land on docDir).
-        let base = docDir.path.hasSuffix("/") ? docDir.path : docDir.path + "/"
-        guard resolved.path.hasPrefix(base) else {
+        let base = realBase.path.hasSuffix("/") ? realBase.path : realBase.path + "/"
+        guard realResolved.path.hasPrefix(base) else {
             return .error(.outsideAttachmentDir)
         }
 
-        return .ok(resolved)
+        return .ok(realResolved)
     }
 }

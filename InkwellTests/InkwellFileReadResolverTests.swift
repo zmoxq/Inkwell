@@ -212,4 +212,68 @@ final class InkwellFileReadResolverTests: XCTestCase {
             .outsideAttachmentDir
         )
     }
+
+    // MARK: - Symlinks (filesystem-backed)
+
+    /// Real temp directory: symlink checks need existing paths.
+    private func withTempDir(_ body: (URL) throws -> Void) throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ResolverSymlinkTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try body(dir)
+    }
+
+    func testRejectsSymlinkEscapingDirectory() throws {
+        try withTempDir { root in
+            // Vault dir with the note; secret lives OUTSIDE the vault.
+            let vault = root.appendingPathComponent("vault")
+            try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+            let secret = root.appendingPathComponent("secret.txt")
+            try Data("top secret".utf8).write(to: secret)
+            let link = vault.appendingPathComponent("innocent.csv")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: secret)
+
+            let note = vault.appendingPathComponent("note.md")
+            let result = InkwellFileReadResolver.resolve(relativePath: "innocent.csv", documentURL: note)
+            assertError(result, .outsideAttachmentDir)
+        }
+    }
+
+    func testAcceptsSymlinkWithinDirectory() throws {
+        try withTempDir { root in
+            let vault = root.appendingPathComponent("vault")
+            try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+            let real = vault.appendingPathComponent("data.csv")
+            try Data("1,2,3".utf8).write(to: real)
+            let link = vault.appendingPathComponent("alias.csv")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+            let note = vault.appendingPathComponent("note.md")
+            let result = InkwellFileReadResolver.resolve(relativePath: "alias.csv", documentURL: note)
+            guard case .ok(let url) = result else {
+                XCTFail("expected in-directory symlink to resolve")
+                return
+            }
+            // Reads the resolved target, which stays inside the directory.
+            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "1,2,3")
+        }
+    }
+
+    func testRejectsSymlinkedSubdirectoryEscape() throws {
+        try withTempDir { root in
+            // A symlinked FOLDER pointing outside must not smuggle reads out.
+            let vault = root.appendingPathComponent("vault")
+            let outside = root.appendingPathComponent("outside")
+            try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: outside.appendingPathComponent("f.csv"))
+            let linkDir = vault.appendingPathComponent("data")
+            try FileManager.default.createSymbolicLink(at: linkDir, withDestinationURL: outside)
+
+            let note = vault.appendingPathComponent("note.md")
+            let result = InkwellFileReadResolver.resolve(relativePath: "data/f.csv", documentURL: note)
+            assertError(result, .outsideAttachmentDir)
+        }
+    }
 }
