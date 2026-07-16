@@ -327,6 +327,14 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 **连带裁决**(同日):KaTeX 只认 `$$...$$`,不支持 ```` ```katex ```` 围栏;渲染块不加 renderer 标识角标。
 
+### 验收缺口补齐:math 现场输入(2026-07-16)
+
+**Commit**: `36aa394`
+
+§9 验收第 1 条列有「现场输入 mermaid / **math** / stockchart 围栏,光标离开即渲染」,但 LiveConverter 从未有过 `$$` 规则——现场输入 `$$` + Enter 零转换,display math 只能经冷加载出现。Step 7 验收时此项未被发现,属验收清单与实现不符。
+
+补齐:LiveConverter 增加与 ``` 围栏对称的规则——独占一行 `$$` + Enter → display-math 编辑态 fence,文本含双定界符(落在上一条契约变更上),光标置于中间空行;leave-edit 的解析/渲染/退化语义全部复用,零新机制。harness 合成键盘事件验证:Enter 被拦截(修复前否)、EditMode 激活、光标落点正确、离开后 KaTeX 渲染、round-trip 干净、`---` 与 ``` 规则无退化。
+
 ---
 
 *Document version: 1.6 — display-math 编辑态含 $$ 定界符契约变更(v1.5: blur 语义收窄、Step 7 回归、serializer live-fence 修复、carousel ensureEdgeGaps 覆盖)*
