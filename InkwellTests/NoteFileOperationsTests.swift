@@ -53,4 +53,76 @@ struct NoteFileOperationsTests {
             #expect(doc.tags == ["keep"])
         }
     }
+
+    // MARK: - Rename / move (§2)
+
+    @Test func renameMovesSidecarAlongWithBytesUnchanged() throws {
+        try withTempDir { dir in
+            let src = dir.appendingPathComponent("old.md")
+            try Data("# body\n".utf8).write(to: src)
+            try SidecarStore.setTags(["a"], forMarkdownAt: src)
+            let sidecarBytes = try Data(contentsOf: SidecarStore.sidecarURL(forMarkdownAt: src))
+
+            let dst = dir.appendingPathComponent("sub").appendingPathComponent("new.md")
+            try FileManager.default.createDirectory(
+                at: dst.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try NoteFileOperations.renameNote(from: src, to: dst)
+
+            #expect(!exists(src))
+            #expect(!exists(SidecarStore.sidecarURL(forMarkdownAt: src)))
+            #expect(try String(contentsOf: dst, encoding: .utf8) == "# body\n")
+            // Sidecar followed byte-for-byte: a move must never rewrite it.
+            #expect(try Data(contentsOf: SidecarStore.sidecarURL(forMarkdownAt: dst)) == sidecarBytes)
+        }
+    }
+
+    @Test func renameWithoutSidecarMovesOnlyMarkdown() throws {
+        try withTempDir { dir in
+            let src = dir.appendingPathComponent("old.md")
+            try Data("x".utf8).write(to: src)
+            let dst = dir.appendingPathComponent("new.md")
+            try NoteFileOperations.renameNote(from: src, to: dst)
+            #expect(exists(dst))
+            #expect(!exists(SidecarStore.sidecarURL(forMarkdownAt: dst)))
+        }
+    }
+
+    @Test func renameRefusedWhenDestinationMarkdownExists() throws {
+        try withTempDir { dir in
+            let src = dir.appendingPathComponent("old.md")
+            try Data("src".utf8).write(to: src)
+            try SidecarStore.setTags(["a"], forMarkdownAt: src)
+            let dst = dir.appendingPathComponent("new.md")
+            try Data("dst".utf8).write(to: dst)
+
+            #expect(throws: NoteFileOperations.OperationError.destinationExists) {
+                try NoteFileOperations.renameNote(from: src, to: dst)
+            }
+            // Nothing moved.
+            #expect(exists(src))
+            #expect(exists(SidecarStore.sidecarURL(forMarkdownAt: src)))
+            #expect(try Data(contentsOf: dst) == Data("dst".utf8))
+        }
+    }
+
+    @Test func renameDisplacesStaleOrphanSidecarAtDestination() throws {
+        try withTempDir { dir in
+            let src = dir.appendingPathComponent("old.md")
+            try Data("src".utf8).write(to: src)
+            try SidecarStore.setTags(["ours"], forMarkdownAt: src)
+            let ourSidecarBytes = try Data(contentsOf: SidecarStore.sidecarURL(forMarkdownAt: src))
+
+            // Orphan sidecar at the destination name, no matching .md.
+            let dst = dir.appendingPathComponent("new.md")
+            let orphan = SidecarStore.sidecarURL(forMarkdownAt: dst)
+            try Data(#"{"schemaVersion": 1, "ai": {"stale": true}}"#.utf8).write(to: orphan)
+
+            try NoteFileOperations.renameNote(from: src, to: dst)
+
+            // Our sidecar owns the destination name; the orphan was
+            // displaced (to the trash), not merged into.
+            #expect(try Data(contentsOf: orphan) == ourSidecarBytes)
+        }
+    }
 }
