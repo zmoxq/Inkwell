@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style id="theme-style">/* injected by Swift */</style>
 
-<!-- Highlight.js for code syntax highlighting -->
-<link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<!-- Highlight.js (Phase 3 → local): 通过 inkwell-asset:// scheme 从 WebAssets/highlight/ 加载。
+     深浅两套主题 CSS 都在本地,updateDarkModeTheme() 改写 #hljs-theme 的 href 在两者间切换。
+     用同步 <script> 不要 async/defer,确保 renderer/decorator 调用时 hljs 已就绪。 -->
+<link rel="stylesheet" id="hljs-theme" href="inkwell-asset:///highlight/github.min.css">
+<script src="inkwell-asset:///highlight/highlight.min.js"></script>
 <!-- Mermaid: 通过 inkwell-asset:// scheme 从 app Bundle 的 WebAssets/mermaid/ 加载 -->
 <script src="inkwell-asset:///mermaid/mermaid.min.js"></script>
 <!-- KaTeX (Phase 3 PR 3): 通过 inkwell-asset:// scheme 加载,放在 katex/ 子目录。
@@ -5591,7 +5593,7 @@
       const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       const themeLink = document.getElementById('hljs-theme');
       if (themeLink) {
-        const base = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/';
+        const base = 'inkwell-asset:///highlight/';
         themeLink.href = isDark ? base + 'github-dark.min.css' : base + 'github.min.css';
       }
 
