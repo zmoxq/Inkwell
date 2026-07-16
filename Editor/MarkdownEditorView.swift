@@ -529,11 +529,10 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     ///   - 成功: { success: true, content: "<file content>" }
     ///   - 失败: { success: false, error: { code: "FILE_NOT_FOUND", message: "..." } }
     ///
-    /// 边界检查由 InkwellFileReadResolver 完成。具体规则:
+    /// 边界检查由 InkwellFileReadResolver 完成。具体规则(D.15 修订版):
     ///   - 拒绝绝对路径
-    ///   - 必须以 "<docname>/" 开头
-    ///   - 标准化后必须仍在同名子文件夹内
-    /// (详见 PHASE_3_ARCHITECTURE.md 附录 D.6 + D.15)
+    ///   - 相对路径对笔记所在目录解析,标准化后必须严格位于该目录内部
+    /// (详见 PHASE_3_ARCHITECTURE.md §十一「readLocalFile 文件读取边界」)
     private func handleReadLocalFile(payload: [String: Any]) {
         guard let relativePath = payload["relativePath"] as? String,
               let requestId = payload["requestId"] as? String
