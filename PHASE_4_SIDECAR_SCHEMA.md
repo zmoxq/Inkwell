@@ -124,3 +124,13 @@ V1 实现范围:Inkwell 是唯一写入方,并发实际不存在,故只实现第
 **实施现实**:应用内当时并无 rename/move/delete 的任何 UI 或操作入口(AppState 只有 open/create/save)。经确认,本 PR 只交付操作层 + 单测;UI 挂接(sidebar context menu、开标签页时的 URL 同步——牵涉 `MarkdownDocument.url` 由 let 改 var)留给后续 PR。在 UI 挂接完成之前,§2「应用内改名同步搬移」对用户实际不生效(应用外改名依赖孤儿恢复,亦未实现)。
 
 **冲突决策**:renameNote 目标 .md 已存在 → 拒绝整个操作;目标位置存在孤儿 sidecar → 先移入系统废纸篓(可恢复,不硬删)再搬入我方文件——§2 认定错配比丢失更糟,孤儿留在原名下必然误配到搬入的笔记。删除走 `FileManager.trashItem`,sidecar 先行,保证部分失败时元数据不被静默孤立。
+
+### PR 2.5 — 文件管理 UI(2026-07-16)
+
+实现:sidebar 文件行 context menu(Rename… / Move to Trash,均经 `AppState.renameNote` / `deleteNote` → NoteFileOperations,不直接动文件);`MarkdownDocument.url` 由 let 改 `@Published var`,开着的 tab 在改名后 URL、标题自动跟随;删除开着的笔记时 tab 关闭且**丢弃未保存修改**(保存会让刚删的路径复活)。rename 仅同目录改名,不含跨目录移动。
+
+**未保存修改的顺序**:先保存到旧路径,再搬移。保存后磁盘状态完整自洽,搬移是对最新字节的纯成对操作,`saveNote` 写入的 contentHash 与被搬字节一致,任何中断点哈希配对链路不脱节;搬移失败时全部内容已安全落在旧路径。
+
+**附件耦合的实测结论与决策**:普通图片经 WebView base URL(笔记所在目录)相对解析,与笔记文件名零耦合,同目录改名不断;`readLocalFile` 桥(现用户仅 stockchart 本地 CSV)因 D.15 的 `<docname>/` 前缀契约,改名后重开笔记即断(live session 内 coordinator 持旧 URL,暂不受影响)。决策:rename 不设障碍,此限制如实记录;修复归属 resolver 契约层(前缀基准由文件名改为目录),属 Phase 3 安全设计变更,单独立项。改名后附件文件夹保持旧名,功能完好,仅命名耦合失效——新旧附件可能分居两个文件夹。
+
+**已知陈旧项(不处理)**:`recentFiles` 中的旧 URL 在改名/删除后不同步(应用外操作同样触发的既有问题)。
