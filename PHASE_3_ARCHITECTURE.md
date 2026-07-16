@@ -446,6 +446,22 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 
 ## 十二、已知限制
 
+### round-trip 事故清单(2026-07-16 发现,逐条待办)
+
+在 `tests/katex-smoke.md` / `tests/mermaid-smoke.md` 的磁盘副本上发现五类 round-trip 损坏,**直接违反底线 1(磁盘产物必须是干净标准 Markdown)**。发现时间 7/16,损坏发生在 7/13–7/14,与 Phase 4 各 PR 无关。
+
+| # | 症状 | 状态 |
+|---|---|---|
+| 1 | 无语言 ``` 围栏存盘后被塞进 hljs 猜的语言(```ruby / ```lua / ```kotlin) | **已修**(2026-07-16,decorator 剥离探测结果;见附录 A 决策记录) |
+| 2 | `<span style="color:rgb(...)">` 裸 HTML 落盘 | 待查。出口在 serializer 的 `span` 分支(为工具栏文字颜色而设),入口未确认 |
+| 3 | `## 1. Flowchart` → `## Flowchart`,标题编号被吃 | 待查。单次 round-trip 未复现,疑需多轮或编辑态参与 |
+| 4 | `PHASE_3_ARCHITECTURE` → `PHASE*3*ARCHITECTURE`,词内下划线被当斜体 | **已复现**(单次 round-trip 必现)。CommonMark 规定词内 `_` 不构成强调,parser 的斜体规则过宽 |
+| 5 | `---` 分隔线 → `\|  \|` / `\| :---: \|` 表格 | **已复现**(单次 round-trip 必现) |
+
+复现手段:`scratchpad/harness` —— 取真实 editor.html,仅把 `inkwell-asset:///` 改写为 http 路径,其余一字不动,在浏览器里跑 `InkwellEditor.loadMarkdown()` → `getMarkdown()` 对比。此法可在不启动 app 的前提下验证 parser/serializer/decorator 的真实行为,建议后续 round-trip 缺陷沿用。
+
+**测试网缺口**:parser/serializer 目前零自动化 round-trip 测试,这正是五类缺陷能潜伏至今的原因。
+
 ### LiveConverter 实时切换未接入
 
 设计区分了两条渲染路径,实际只接通了一条:
@@ -516,6 +532,7 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 | 全局状态前置 | 暂硬编码,不预先抽象 hook | 仅 mermaid 一例,YAGNI |
 | 大型 JS 库管理 | 自定义 `inkwell-asset://` scheme + Bundle | 不污染用户目录;跟随 app 版本;零复制 IO |
 | readLocalFile 边界基准(2026-07-16 修订) | 笔记所在目录(见 §十一 D.15 修订版) | 初版 `<docname>/` 前缀在 rename 后必断且与图片通道不对称;目录基准下两通道同一边界,穿越防护强度不变 |
+| 围栏语言的权威来源(2026-07-16) | 作者声明的语言;hljs 的自动探测**仅供显示**,不得进入序列化 | 与「源码权威性」同源:探测结果一旦留在 DOM 的 `language-*` class 上,serializer 会把它当成用户写的语言存盘——无语言围栏存盘后变 ```ruby,即捏造源码 |
 
 ---
 
