@@ -130,6 +130,20 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
         return (result as? [String]) ?? []
     }
 
+    /// Selects a range from the end of the first block matching `fromSelector`
+    /// to a position inside the first code block, then dispatches `key` and
+    /// returns whether the default was prevented. `codeOffset` is a fraction
+    /// (0..1) of the code text: <1 partially cuts the code block (should be
+    /// guarded), 1 selects through the code end (a clean full delete).
+    func keydownPreventedForCrossBlock(
+        _ markdown: String, fromSelector: String, codeFraction: Double, key: String
+    ) async throws -> Bool {
+        try await load(markdown)
+        let js = "(function(){ if(!window.__IE.selectFromEndIntoCode(\(jsStringLiteral(fromSelector)), \(codeFraction))) return null; return window.__IE.pressKey(\(jsStringLiteral(key))); })()"
+        let result = try await webView.evaluateJavaScript(js)
+        return (result as? Bool) ?? false
+    }
+
     // MARK: - Private
 
     private func getMarkdown() async throws -> String {
@@ -146,6 +160,14 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
           caretEndOf: function(sel){ var el=this.ed.querySelector(sel); if(!el) return false; this.ed.focus(); var r=document.createRange(); r.selectNodeContents(el); r.collapse(false); var s=getSelection(); s.removeAllRanges(); s.addRange(r); return true; },
           caretStartOfCode: function(){ var code=this.ed.querySelector('pre code'); if(!code) return false; this.ed.focus(); var r=document.createRange(); r.setStart(code.firstChild||code,0); r.collapse(true); var s=getSelection(); s.removeAllRanges(); s.addRange(r); return true; },
           pressKey: function(key){ var e=new KeyboardEvent('keydown',{key:key,bubbles:true,cancelable:true}); this.ed.dispatchEvent(e); return e.defaultPrevented; },
+          _lastText: function(el){ var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT); var n, last=null; while(n=w.nextNode()) last=n; return last; },
+          _firstText: function(el){ var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT); return w.nextNode(); },
+          selectFromEndIntoCode: function(fromSel, frac){ var from=this.ed.querySelector(fromSel); var code=this.ed.querySelector('pre code'); if(!from||!code) return false; this.ed.focus();
+            var ft=this._lastText(from), ct=this._firstText(code); if(!ft||!ct) return false;
+            var endOff = Math.min(ct.textContent.length, Math.max(0, Math.round(ct.textContent.length*frac)));
+            if (frac>=1){ var lt=this._lastText(code); ct=lt; endOff=lt.textContent.length; }
+            var r=document.createRange(); r.setStart(ft, ft.textContent.length); r.setEnd(ct, endOff);
+            var s=getSelection(); s.removeAllRanges(); s.addRange(r); return true; },
           editCycle: function(sel){ var el=this.ed.querySelector(sel); if(!el||typeof EditMode==='undefined') return false; EditMode.requestEnterEdit(el,{via:'click'}); var f=this.ed.querySelector('pre[data-block-type]') || (this.ed.querySelector('code.inkwell-live-fence') && this.ed.querySelector('code.inkwell-live-fence').closest('pre')); if(!f) return false; EditMode.requestLeaveEdit(f); return true; },
           invariants: function(){ var v=[]; var ed=this.ed;
             ed.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function(h){ if(h.querySelector('pre,div,table,ul,ol,blockquote')) v.push('block-in-heading'); h.querySelectorAll('span[style]').forEach(function(s){ if(/color/.test(s.getAttribute('style')||'')) v.push('styled-span-in-heading'); }); });

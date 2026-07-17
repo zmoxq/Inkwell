@@ -5502,6 +5502,44 @@
             }
           }
         }
+        // Cross-block selection delete (Approach A, conservative): a
+        // non-collapsed selection that PARTIALLY cuts a protected block
+        // (<pre> / renderer div) leaves that block's surviving content to be
+        // textified into the adjacent text block on delete (hljs colors leak
+        // as inline <span style>). Prevent it. A selection that fully
+        // contains the protected block deletes it cleanly and is allowed.
+        if ((e.key === 'Backspace' || e.key === 'Delete') && !e.isComposing) {
+          const sel = window.getSelection();
+          if (sel.rangeCount && !sel.isCollapsed) {
+            const range = sel.getRangeAt(0);
+            const protectedAncestor = (node) => {
+              let n = node && node.nodeType === Node.ELEMENT_NODE ? node : (node ? node.parentNode : null);
+              while (n && n !== this.element) {
+                if (n.tagName === 'PRE' || (n.classList && n.classList.contains('inkwell-block-renderer'))) return n;
+                n = n.parentNode;
+              }
+              return null;
+            };
+            const startP = protectedAncestor(range.startContainer);
+            const endP = protectedAncestor(range.endContainer);
+            let partialCut = false;
+            // Tail of endP survives (end is inside endP, not at its very end).
+            if (endP && startP !== endP) {
+              const after = document.createRange();
+              after.selectNodeContents(endP);
+              after.setStart(range.endContainer, range.endOffset);
+              if (after.toString().replace(/\s/g, '').length > 0) partialCut = true;
+            }
+            // Head of startP survives (start is inside startP, not at its start).
+            if (startP && startP !== endP) {
+              const before = document.createRange();
+              before.selectNodeContents(startP);
+              before.setEnd(range.startContainer, range.startOffset);
+              if (before.toString().replace(/\s/g, '').length > 0) partialCut = true;
+            }
+            if (partialCut) { e.preventDefault(); return; }
+          }
+        }
         // Inside <pre>: prevent Backspace at the very start from merging
         // the code block with the previous element (WebKit default behavior).
         if (e.key === 'Backspace' && !e.isComposing) {

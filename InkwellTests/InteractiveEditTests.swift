@@ -88,4 +88,26 @@ final class InteractiveEditTests: XCTestCase {
         )
         XCTAssertTrue(prevented, "Delete at paragraph end before a code block must be prevented")
     }
+
+    // MARK: - Cross-block selection delete (Approach A: conservative guard)
+
+    func testCrossBlockDeletePartialCutIsGuarded() async throws {
+        // A selection from a heading's end into the MIDDLE of a code block
+        // would leave the code's tail behind, textified into the heading
+        // (hljs colors leaking as inline HTML). Such a partial cut must be
+        // prevented.
+        let prevented = try await harness().keydownPreventedForCrossBlock(
+            "## Heading\n\n```js\nconst x = 1;\n```\n", fromSelector: "h2", codeFraction: 0.4, key: "Delete"
+        )
+        XCTAssertTrue(prevented, "Partial cross-block cut into a code block must be prevented")
+    }
+
+    func testCrossBlockDeleteFullBlockIsAllowed() async throws {
+        // Selecting through the code block's END fully removes it — no
+        // remnant, no corruption — and must NOT be prevented.
+        let prevented = try await harness().keydownPreventedForCrossBlock(
+            "## Heading\n\n```js\nconst x = 1;\n```\n", fromSelector: "h2", codeFraction: 1.0, key: "Delete"
+        )
+        XCTAssertFalse(prevented, "Deleting a fully-selected code block must be allowed")
+    }
 }
