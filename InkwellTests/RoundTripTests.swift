@@ -66,6 +66,22 @@ final class RoundTripTests: XCTestCase {
         }
     }
 
+    /// Asserts a fixture round-trips to its golden `<name>.expected.md`
+    /// (used for documented, semantics-preserving normalizations — see
+    /// NORMALIZATION.md). Byte-exact modulo the EOF rule.
+    private func assertRoundTrip(
+        _ name: String, produces expectedName: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        let input = try fixture(name)
+        let output = try await harness().roundTrip(input)
+        let expected = canonicalized(try fixture(expectedName))
+        let actual = canonicalized(output)
+        if expected != actual {
+            XCTFail("Normalization mismatch \(name):\n\(firstDivergence(expected, actual))", file: file, line: line)
+        }
+    }
+
     private func firstDivergence(_ expected: String, _ actual: String) -> String {
         let e = expected.components(separatedBy: "\n")
         let a = actual.components(separatedBy: "\n")
@@ -129,6 +145,14 @@ final class RoundTripTests: XCTestCase {
         // An ordered list followed by an unordered list must stay two lists
         // (the bullet list must not be absorbed as ordered items).
         try await assertRoundTripClean("list-siblings.md")
+    }
+
+    // MARK: - Documented normalizations (assert against a golden)
+
+    func testEmphasisMarkerNormalization() async throws {
+        // Real _underscore_ / __double__ emphasis normalizes to * / ** —
+        // a semantics-preserving marker normalization (NORMALIZATION.md).
+        try await assertRoundTrip("emphasis-marker.md", produces: "emphasis-marker.expected.md")
     }
 
     // MARK: - Defects under active repair (RED now, GREEN after step 2)
