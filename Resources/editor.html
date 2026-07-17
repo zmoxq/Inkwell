@@ -2991,9 +2991,12 @@
         if (headerRow) {
           const cells = Array.from(headerRow.querySelectorAll('th, td'));
           md += '| ' + cells.map(c => c.textContent.trim()).join(' | ') + ' |\n';
-          // Alignment markers (default to center since our CSS default is center)
+          // Alignment markers. A cell with no inline text-align is left/
+          // default and must serialize as '---'; defaulting to center here
+          // used to rewrite every default/left column as ':---:', changing
+          // the source alignment on every save.
           md += '| ' + cells.map(c => {
-            const align = c.style.textAlign || 'center';
+            const align = c.style.textAlign || 'left';
             if (align === 'center') return ':---:';
             if (align === 'right') return '---:';
             return '---';

@@ -108,6 +108,12 @@ final class RoundTripTests: XCTestCase {
         try await assertRoundTripClean("table.md")
     }
 
+    func testTableAlignment() async throws {
+        // Default/center/right alignment markers must each round-trip
+        // unchanged (serializeTable used to collapse everything to center).
+        try await assertRoundTripClean("table-alignment.md")
+    }
+
     // MARK: - Defects under active repair (RED now, GREEN after step 2)
 
     func testEmphasisUnderscore() async throws {
