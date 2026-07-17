@@ -2736,35 +2736,12 @@
           continue;
         }
 
-        // Unordered list
-        if (line.match(/^[-*+]\s+/)) {
-          html += '<ul>\n';
-          while (i < lines.length && lines[i].match(/^[-*+]\s+/)) {
-            const content = lines[i].replace(/^[-*+]\s+/, '');
-            html += '<li>' + this.parseInline(content) + '</li>\n';
-            i++;
-          }
-          html += '</ul>\n';
-          continue;
-        }
-
-        // Ordered list (tolerant of single blank lines between items)
-        if (line.match(/^\d+\.\s+/)) {
-          const startNum = parseInt(line.match(/^(\d+)\./)[1]);
-          html += '<ol' + (startNum !== 1 ? ' start="' + startNum + '"' : '') + '>\n';
-          while (i < lines.length) {
-            if (lines[i].match(/^\d+\.\s+/)) {
-              const content = lines[i].replace(/^\d+\.\s+/, '');
-              html += '<li>' + this.parseInline(content) + '</li>\n';
-              i++;
-            } else if (lines[i].trim() === '' && i + 1 < lines.length && lines[i + 1].match(/^\d+\.\s+/)) {
-              // Skip blank line between numbered items
-              i++;
-            } else {
-              break;
-            }
-          }
-          html += '</ol>\n';
+        // Unordered or ordered list (nesting-aware, indent = parent marker
+        // width per CommonMark; see parseList).
+        if (line.match(/^[-*+]\s+/) || line.match(/^\d+\.\s+/)) {
+          const res = this.parseList(lines, i, 0);
+          html += res.html;
+          i = res.nextIdx;
           continue;
         }
 
@@ -2798,6 +2775,60 @@
         i++;
       }
       return html;
+    },
+
+    // Parse a list starting at lines[startIdx] whose items are indented by
+    // `indent` spaces. Nested lists are recognized when following lines are
+    // indented to at least the parent item's content column (indent + marker
+    // width), and are parsed recursively into <ul>/<ol> inside the <li>.
+    // Returns { html, nextIdx }. A single blank line between same-indent
+    // items is tolerated (loose list -> tight, matching prior OL behavior).
+    parseList(lines, startIdx, indent) {
+      let i = startIdx;
+      const first = lines[i].match(/^(\s*)([-*+]|\d+\.)\s+/);
+      const isOl = /\d+\./.test(first[2]);
+      const startNum = isOl ? parseInt(first[2], 10) : 1;
+      let html = isOl
+        ? ('<ol' + (startNum !== 1 ? ' start="' + startNum + '"' : '') + '>\n')
+        : '<ul>\n';
+      while (i < lines.length) {
+        const line = lines[i];
+        const m = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+        if (!m) {
+          // Blank line only continues the list if the next line is a
+          // same-indent, same-type item (a different marker type starts a
+          // separate list).
+          if (line.trim() === '' && i + 1 < lines.length) {
+            const nm = lines[i + 1].match(/^(\s*)([-*+]|\d+\.)\s+/);
+            if (nm && nm[1].length === indent && (/\d+\./.test(nm[2]) === isOl)) { i++; continue; }
+          }
+          break;
+        }
+        const itemIndent = m[1].length;
+        const itemIsOl = /\d+\./.test(m[2]);
+        // Break on a shallower/different indent, or a different list type at
+        // the same indent (an ordered item ends an unordered list and vice
+        // versa); the block loop then starts a fresh list.
+        if (itemIndent !== indent || itemIsOl !== isOl) break;
+        const marker = m[2];
+        const content = m[3];
+        const childIndent = itemIndent + marker.length + 1;
+        i++;
+        // Consume a nested list, if the next line is indented into this
+        // item's content column or deeper.
+        let nested = '';
+        if (i < lines.length) {
+          const peek = lines[i].match(/^(\s*)([-*+]|\d+\.)\s+/);
+          if (peek && peek[1].length >= childIndent) {
+            const res = this.parseList(lines, i, peek[1].length);
+            nested = res.html;
+            i = res.nextIdx;
+          }
+        }
+        html += '<li>' + this.parseInline(content) + nested + '</li>\n';
+      }
+      html += isOl ? '</ol>\n' : '</ul>\n';
+      return { html, nextIdx: i };
     },
 
     parseInline(text) {
@@ -2962,11 +2993,34 @@
       return md;
     },
 
-    serializeList(ul, marker) {
+    // Serialize a list, recursing into nested <ul>/<ol> inside each <li>.
+    // Nested lists are indented by the parent item's marker width (Approach
+    // C: '- ' -> 2, '3. ' -> 3), which is CommonMark's content column and
+    // round-trips the parser's output exactly.
+    serializeList(list, marker, indent) {
+      indent = indent || '';
+      const isOl = list.tagName === 'OL';
+      const startNum = parseInt(list.getAttribute('start'), 10) || 1;
       let md = '';
-      ul.querySelectorAll(':scope > li').forEach((li, idx) => {
-        const prefix = marker === '1.' ? (idx + 1) + '. ' : marker + ' ';
-        md += prefix + this.serializeChildren(li).trim() + '\n';
+      let idx = 0;
+      list.querySelectorAll(':scope > li').forEach(li => {
+        const markerStr = isOl ? ((startNum + idx) + '.') : '-';
+        idx++;
+        // Item content excludes nested lists (handled separately below).
+        let content = '';
+        const nested = [];
+        li.childNodes.forEach(ch => {
+          if (ch.nodeType === Node.ELEMENT_NODE && (ch.tagName === 'UL' || ch.tagName === 'OL')) {
+            nested.push(ch);
+          } else {
+            content += this.serializeNode(ch);
+          }
+        });
+        md += indent + markerStr + ' ' + content.trim() + '\n';
+        const childIndent = indent + ' '.repeat(markerStr.length + 1);
+        nested.forEach(nl => {
+          md += this.serializeList(nl, nl.tagName === 'OL' ? '1.' : '-', childIndent);
+        });
       });
       return md;
     },

@@ -114,6 +114,23 @@ final class RoundTripTests: XCTestCase {
         try await assertRoundTripClean("table-alignment.md")
     }
 
+    func testNestedList() async throws {
+        // Nested unordered list (2-space indent = parent '- ' marker width).
+        try await assertRoundTripClean("nested-list.md")
+    }
+
+    func testNestedListOrdered() async throws {
+        // Bullets nested under an ordered item (3-space indent = '3. '
+        // marker width) — the smoke-katex sub-list shape.
+        try await assertRoundTripClean("nested-list-ordered.md")
+    }
+
+    func testListSiblings() async throws {
+        // An ordered list followed by an unordered list must stay two lists
+        // (the bullet list must not be absorbed as ordered items).
+        try await assertRoundTripClean("list-siblings.md")
+    }
+
     // MARK: - Defects under active repair (RED now, GREEN after step 2)
 
     func testEmphasisUnderscore() async throws {
@@ -129,19 +146,12 @@ final class RoundTripTests: XCTestCase {
     // MARK: - Known-open defects (documented, not fixed in this project)
 
     func testSmokeKatex() async throws {
-        // The underscore and thematic-break fixes clear lines 1–101 of this
-        // broad fixture. It still fails on an indented sub-list whose blank
-        // lines are reflowed — the same list-blank-line family as
-        // testNestedList (defect #6). Unwraps to green once that is fixed.
-        XCTExpectFailure("Broad smoke file still hits the list-blank-line defect (#6)")
+        // The underscore, thematic-break and nested-list fixes clear the
+        // former failures. One residual remains: a list immediately
+        // following a paragraph (no blank line) gains a blank line on
+        // serialize — the block-adjacency family (#7), investigate-only this
+        // program. Unwraps to green once #7 lands.
+        XCTExpectFailure("Broad smoke file still hits the block-adjacency defect (#7): paragraph-adjacent list")
         try await assertRoundTripClean("smoke-katex.md")
-    }
-
-    func testNestedList() async throws {
-        // Defect: a blank line is inserted between a list item and its
-        // nested child (tight list becomes loose). Discovered by the net,
-        // not in the original incident list. See PHASE_3_ARCHITECTURE.md §12.
-        XCTExpectFailure("Known defect: nested list gains a blank line on round-trip")
-        try await assertRoundTripClean("nested-list.md")
     }
 }
