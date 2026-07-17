@@ -462,11 +462,25 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 
 | # | 症状 | 状态 |
 |---|---|---|
-| 6 | 嵌套/缩进列表项之间被增删空行(tight↔loose 漂移) | 开放。`testNestedList` 挂 `XCTExpectFailure`;`smoke-katex` 亦卡此项(缩进子列表) |
-| 7 | 软换行段落(相邻两行无空行)被拆成两段 | 开放。可能属有意规范化(WYSIWYG 常见),语义存疑,待裁决 |
-| 8 | 表格列对齐一律塌成居中(`:---` / `---` → `:---:`) | 开放。出口在 serializer 的 `serializeTable`,与 Step 2 的表格**检测**修复无关 |
+| 6 | 嵌套/缩进列表项之间被增删空行(tight↔loose 漂移) | **已修**(2026-07-17,parseList 递归嵌套 + serializeList 按 marker 宽度缩进;方案 C)。测试网 `testNestedList` / `testNestedListOrdered` / `testListSiblings` |
+| 7 | 软换行段落(相邻两行无空行)被拆成两段 | 开放,**只侦查不修**(见下「#7 侦查结论」)。设计裁决未定 |
+| 8 | 表格列对齐一律塌成居中(`:---` / `---` → `:---:`) | **已修**(2026-07-17,serializeTable 无 inline align 的列输出 `---` 而非 `:---:`)。测试网 `testTableAlignment` |
 
-行内 emphasis 标记规范化:真 `_emphasis_` → `*emphasis*`(标记风格统一,语义不变)。视为可接受规范化,非缺陷;测试网不对其断言。
+行内 emphasis 标记规范化:真 `_emphasis_` → `*emphasis*`(标记风格统一,语义不变)。已由金标断言锚定(`testEmphasisMarkerNormalization`),论证见 `tests/roundtrip/NORMALIZATION.md`。
+
+### #7 侦查结论(2026-07-17,只侦查不修)
+
+**拆分位置:parse。** `MarkdownParser.parse` 对每一非空行单独产出一个 `<p>`(editor.html「html += '<p>' + parseInline(line) + '</p>'」一行一段)。相邻两行(无空行)因此在 parse 阶段就成为**两个独立 `<p>`**。
+
+**DOM 留痕:无。** 实测 `line one\nline two` → DOM 为 `<p>line one</p><p>line two</p>`,`<br>` 数为 0,无合并 `<p>`。软换行不留任何痕迹;serialize 只是忠实渲染 parser 造出的两段(每个 `<p>` → `\n\n`),所以磁盘上多一个空行。硬换行(尾双空格)同样被拆成两段,尾空格留存但 `<br>` 语义丢失。
+
+**同根实例**:`intro:\n- item`(段落紧跟列表,无空行)→ `<p>` + `<ul>` 两块 → serialize 插空行。这就是 `smoke-katex` 现存的唯一残留(`testSmokeKatex` 的 xfail 理由),与 #7 同根。
+
+**设计裁决点(留给设计侧)**:
+- 方案「段内合行」:parser 累积连续非空行为**单个** `<p>`(软换行以空格或 `<br>` 表示),贴合 CommonMark 段落语义,round-trip 可做到 byte-exact。
+- 方案「维持拆段」(现状):每行一段,改变渲染语义(一段变两段视觉块),round-trip 插空行。
+
+**张力**:Inkwell 是 WYSIWYG——Enter 通常意味着新段落,Shift+Enter 才是段内换行。若 parser 把 `line1\nline2` 合成一段,与「Enter=新段」的编辑模型可能冲突。这是渲染语义(CommonMark)与编辑 UX(WYSIWYG per-line 段落)之间的真实取舍,须设计侧定夺,本程不改。
 
 ### 侦查结论(2026-07-16,Step 3)
 
