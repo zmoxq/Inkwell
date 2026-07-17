@@ -115,7 +115,9 @@ final class RoundTripTests: XCTestCase {
     }
 
     func testSmokeMermaid() async throws {
-        try await assertRoundTripClean("smoke-mermaid.md")
+        // Golden: multi-line blockquotes fold to one line (soft-wrap
+        // normalization, #7) — the only change from the source.
+        try await assertRoundTrip("smoke-mermaid.md", produces: "smoke-mermaid.expected.md")
     }
 
     func testTable() async throws {
@@ -155,6 +157,19 @@ final class RoundTripTests: XCTestCase {
         try await assertRoundTrip("emphasis-marker.md", produces: "emphasis-marker.expected.md")
     }
 
+    func testSoftWrapFold() async throws {
+        // Soft-wrapped lines fold into one reflowed paragraph line (#7,
+        // CommonMark). Folding loses the wrap positions — a documented
+        // normalization asserted against a golden.
+        try await assertRoundTrip("soft-wrap.md", produces: "soft-wrap.expected.md")
+    }
+
+    func testHardBreak() async throws {
+        // A hard line break (trailing '\') is preserved as a <br> and
+        // serialized back to '\' — byte-exact, not a normalization.
+        try await assertRoundTripClean("hard-break.md")
+    }
+
     // MARK: - Defects under active repair (RED now, GREEN after step 2)
 
     func testEmphasisUnderscore() async throws {
@@ -167,15 +182,10 @@ final class RoundTripTests: XCTestCase {
         try await assertRoundTripClean("thematic-break.md")
     }
 
-    // MARK: - Known-open defects (documented, not fixed in this project)
-
     func testSmokeKatex() async throws {
-        // The underscore, thematic-break and nested-list fixes clear the
-        // former failures. One residual remains: a list immediately
-        // following a paragraph (no blank line) gains a blank line on
-        // serialize — the block-adjacency family (#7), investigate-only this
-        // program. Unwraps to green once #7 lands.
-        XCTExpectFailure("Broad smoke file still hits the block-adjacency defect (#7): paragraph-adjacent list")
-        try await assertRoundTripClean("smoke-katex.md")
+        // Golden: with #6/#7 landed, the only changes from the source are
+        // documented normalizations (blockquote soft-wrap fold, block
+        // adjacency). Formerly XCTExpectFailure; now green against a golden.
+        try await assertRoundTrip("smoke-katex.md", produces: "smoke-katex.expected.md")
     }
 }

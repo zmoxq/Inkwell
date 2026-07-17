@@ -2771,10 +2771,42 @@
           continue;
         }
 
-        html += '<p>' + this.parseInline(line) + '</p>\n';
-        i++;
+        // Paragraph: accumulate consecutive continuation lines (CommonMark
+        // soft wrap) into a single <p>. A soft line break folds to a space;
+        // a hard break (line ending with '\' or two spaces) becomes a <br>.
+        // Accumulation stops at a blank line or any block-start line.
+        const parts = [];
+        while (i < lines.length && !this._startsBlock(lines, i)) {
+          let ln = lines[i];
+          const hardBreak = /\\$/.test(ln) || /\s\s$/.test(ln);
+          ln = ln.replace(/\s+$/, '').replace(/\\$/, '');
+          parts.push(this.parseInline(ln));
+          i++;
+          const moreInParagraph = i < lines.length && !this._startsBlock(lines, i);
+          if (moreInParagraph) parts.push(hardBreak ? '<br>' : ' ');
+        }
+        html += '<p>' + parts.join('') + '</p>\n';
       }
       return html;
+    },
+
+    // True if lines[i] begins a non-paragraph block (so paragraph
+    // accumulation must stop). Mirrors the block rules in parse().
+    _startsBlock(lines, i) {
+      const line = lines[i];
+      if (line.trim() === '') return true;
+      if (/^```/.test(line.trim())) return true;
+      if (line.trim() === '$$') return true;
+      if (/^(---|\*\*\*|___)\s*$/.test(line)) return true;
+      if (/^#{1,6}\s+/.test(line)) return true;
+      if (/^>\s?/.test(line)) return true;
+      if (/^[-*]\s+\[[ xX]\]/.test(line)) return true;                 // task
+      if (/^[-*+]\s+/.test(line) || /^\d+\.\s+/.test(line)) return true; // list
+      if (/^!\[([^\]]*)\]\(([^)]+)\)\s*$/.test(line)) return true;     // image
+      // table header: a pipe-bearing line followed by a separator row
+      if (line.includes('|') && i + 1 < lines.length && lines[i + 1] &&
+          /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(lines[i + 1])) return true;
+      return false;
     },
 
     // Parse a list starting at lines[startIdx] whose items are indented by
@@ -2959,7 +2991,16 @@
         case 'a': return '[' + inner + '](' + (node.getAttribute('href') || '') + ')';
         case 'img': return '![' + (node.getAttribute('alt') || '') + '](' + (node.getAttribute('src') || '') + ')';
         case 'hr': return '---\n\n';
-        case 'br': return '\n';
+        case 'br': {
+          // Hard break -> canonical trailing backslash, but ONLY when
+          // followed by content in the same block. A trailing or sole <br>
+          // (e.g. the <p><br></p> empty-line/edge-gap placeholder) is not a
+          // hard break and must serialize to nothing.
+          let sib = node.nextSibling;
+          while (sib && sib.nodeType === Node.TEXT_NODE && sib.textContent === '') sib = sib.nextSibling;
+          const contentAfter = sib && (sib.nodeType !== Node.TEXT_NODE || sib.textContent.trim() !== '');
+          return contentAfter ? '\\\n' : '';
+        }
         case 'table': return this.serializeTable(node) + '\n\n';
         case 'input': return '';
         case 'span': {
