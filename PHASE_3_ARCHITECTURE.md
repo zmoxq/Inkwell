@@ -452,15 +452,35 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 
 | # | 症状 | 状态 |
 |---|---|---|
-| 1 | 无语言 ``` 围栏存盘后被塞进 hljs 猜的语言(```ruby / ```lua / ```kotlin) | **已修**(2026-07-16,decorator 剥离探测结果;见附录 A 决策记录) |
-| 2 | `<span style="color:rgb(...)">` 裸 HTML 落盘 | 待查。出口在 serializer 的 `span` 分支(为工具栏文字颜色而设),入口未确认 |
-| 3 | `## 1. Flowchart` → `## Flowchart`,标题编号被吃 | 待查。单次 round-trip 未复现,疑需多轮或编辑态参与 |
-| 4 | `PHASE_3_ARCHITECTURE` → `PHASE*3*ARCHITECTURE`,词内下划线被当斜体 | **已复现**(单次 round-trip 必现)。CommonMark 规定词内 `_` 不构成强调,parser 的斜体规则过宽 |
-| 5 | `---` 分隔线 → `\|  \|` / `\| :---: \|` 表格 | **已复现**(单次 round-trip 必现) |
+| 1 | 无语言 ``` 围栏存盘后被塞进 hljs 猜的语言(```ruby / ```lua / ```kotlin) | **已修**(2026-07-16,decorator 剥离探测结果;见附录 A 决策记录)。测试网守卫 `testFenceWithoutLanguage` |
+| 2 | `<span style="color:rgb(...)">` 裸 HTML 落盘 | **当前代码不复现**(见下「侦查结论」)。纯 round-trip 路径干净(`testCodeThenHeading` 绿) |
+| 3 | `## 1. Flowchart` → `## Flowchart`,标题编号被吃 | **当前代码不复现**(纯/多轮/交互三路径均干净;`testHeadingNumbered` 绿) |
+| 4 | `PHASE_3_ARCHITECTURE` → `PHASE*3*ARCHITECTURE`,词内下划线被当斜体 | **已修**(2026-07-16,Step 2:下划线 emphasis 加词边界守卫)。测试网 `testEmphasisUnderscore` |
+| 5 | `---` 分隔线 → 空表格 | **已修**(2026-07-16,Step 2:表头必须含 `\|`,阻止空行被当表头)。测试网 `testThematicBreak` |
 
-复现手段:`scratchpad/harness` —— 取真实 editor.html,仅把 `inkwell-asset:///` 改写为 http 路径,其余一字不动,在浏览器里跑 `InkwellEditor.loadMarkdown()` → `getMarkdown()` 对比。此法可在不启动 app 的前提下验证 parser/serializer/decorator 的真实行为,建议后续 round-trip 缺陷沿用。
+测试网新捕获(超出原五类,均可在纯 round-trip 复现):
 
-**测试网缺口**:parser/serializer 目前零自动化 round-trip 测试,这正是五类缺陷能潜伏至今的原因。
+| # | 症状 | 状态 |
+|---|---|---|
+| 6 | 嵌套/缩进列表项之间被增删空行(tight↔loose 漂移) | 开放。`testNestedList` 挂 `XCTExpectFailure`;`smoke-katex` 亦卡此项(缩进子列表) |
+| 7 | 软换行段落(相邻两行无空行)被拆成两段 | 开放。可能属有意规范化(WYSIWYG 常见),语义存疑,待裁决 |
+| 8 | 表格列对齐一律塌成居中(`:---` / `---` → `:---:`) | 开放。出口在 serializer 的 `serializeTable`,与 Step 2 的表格**检测**修复无关 |
+
+行内 emphasis 标记规范化:真 `_emphasis_` → `*emphasis*`(标记风格统一,语义不变)。视为可接受规范化,非缺陷;测试网不对其断言。
+
+### 侦查结论(2026-07-16,Step 3)
+
+事故 #2(span 泄漏)、#3(标题编号被吃)、以及 mermaid-smoke.md 的 ```mermaid → ```less 未知出口:**在当前 editor.html 上,纯 round-trip、5 轮多轮 round-trip、以及 enter/leave-edit 交互循环三条路径全部无法复现**。
+
+- ```mermaid → ```less 属事故 #1(语言捏造)同族——可复现的那半已修;标签丢失不复现。
+- 磁盘证据:`## ​1. Flowchart` → `## ​ Flowchart`(仅 `1.` 被吃,零宽空格前缀留存)、`## 6. Pie Chart` → 标题里**并入饼图代码内容** `"WebAssets 抽象" : 30` 加 hljs 颜色 span。后者是 DOM 合并式损坏,非纯序列化产物。
+- 时间线:坏文件工作区 mtime 为 7/13,editor.html 其后经历大量修复。
+
+**判定**:#2/#3 及 mermaid 出口要么已被其后的修复消解,要么源自测试网不覆盖的交互编辑路径。当前无 live 复现,依「找不到如实报告」不盲修。若日后重现,证据指向交互编辑(contentEditable 块合并),而非 parser/serializer 纯路径。
+
+复现手段:`scratchpad/harness` —— 取真实 editor.html,仅把 `inkwell-asset:///` 改写为 http 路径,其余一字不动,在浏览器里跑 `InkwellEditor.loadMarkdown()` → `getMarkdown()` 对比。快速迭代用;正式回归以 `InkwellTests/RoundTripTests`(离屏 WKWebView + 真 Bundle 资产)为准。
+
+**测试网已补齐**:`tests/roundtrip/` + `InkwellTests/RoundTripTests` 是常驻交付物,经 `xcodebuild test` 运行,覆盖上述纯 round-trip 路径。交互编辑路径的自动化仍是缺口。
 
 ### LiveConverter 实时切换未接入
 
