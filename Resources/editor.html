@@ -2667,7 +2667,14 @@
         }
 
         // Table
-        if (i + 1 < lines.length && lines[i + 1] && lines[i + 1].match(/^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/)) {
+        // The header line must contain a pipe (GFM: a table header always
+        // has one). Without this guard a BLANK line preceding a '---' is
+        // taken as an empty header + separator row — turning a thematic
+        // break surrounded by blank lines into an empty table. Requiring a
+        // pipe also keeps a pipe-less 'text\n---' (setext-style input) from
+        // being misread as a table. This check runs before the blank-line
+        // skip below, so the header guard must reject blank lines itself.
+        if (i + 1 < lines.length && line.includes('|') && lines[i + 1] && lines[i + 1].match(/^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/)) {
           const headerCells = this.parseTableRow(line);
           const sepCells = this.parseTableRow(lines[i + 1]);
           // Parse alignment from separator
@@ -2805,7 +2812,12 @@
       text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       text = text.replace(/__(.+?)__/g, '<strong>$1</strong>');
       text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-      text = text.replace(/_(.+?)_/g, '<em>$1</em>');
+      // Underscore emphasis is NOT allowed intra-word (CommonMark): a path
+      // like PHASE_3_ARCHITECTURE or an identifier foo_bar_baz must stay
+      // literal. Require the delimiters not to be flanked by alphanumerics
+      // on their outer side. (Asterisk emphasis above intentionally has no
+      // such guard — *word* intra-word emphasis is valid.)
+      text = text.replace(/(?<![A-Za-z0-9])_(.+?)_(?![A-Za-z0-9])/g, '<em>$1</em>');
       text = text.replace(/~~(.+?)~~/g, '<del>$1</del>');
       text = text.replace(/`([^`]+)`/g, (_, code) => '<code>' + code + '</code>');
       // Inline extensions（==highlight== 等）— PR 1 引入
