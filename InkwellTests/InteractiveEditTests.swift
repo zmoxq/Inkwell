@@ -67,4 +67,25 @@ final class InteractiveEditTests: XCTestCase {
         )
         XCTAssertTrue(prevented, "Backspace at code start must be prevented")
     }
+
+    // MARK: - Forward-delete heading absorption (the worst corruption)
+
+    func testDeleteAtHeadingEndBeforeCodeIsGuarded() async throws {
+        // Delete at the end of a heading whose next block is a rendered code
+        // block used to merge the code (with hljs colors leaking as inline
+        // <span style>) into the heading — the disk corruption
+        // '## Heading<span style="color:...">const...'. A real Delete key
+        // must be prevented so the native merge never happens.
+        let prevented = try await harness().keydownPreventedAtEndOf(
+            "## Heading\n\n```js\nconst x = 1;\n```\n", selector: "h2", key: "Delete"
+        )
+        XCTAssertTrue(prevented, "Delete at heading end before a code block must be prevented")
+    }
+
+    func testDeleteAtParagraphEndBeforeCodeIsGuarded() async throws {
+        let prevented = try await harness().keydownPreventedAtEndOf(
+            "Paragraph text\n\n```js\nconst x = 1;\n```\n", selector: "p", key: "Delete"
+        )
+        XCTAssertTrue(prevented, "Delete at paragraph end before a code block must be prevented")
+    }
 }

@@ -5543,6 +5543,39 @@
             }
           }
         }
+        // Delete (forward) at the end of a text block whose next block is a
+        // protected block (rendered code <pre>, or a BlockRenderer output
+        // div) must not merge that block up: WebKit textifies the code and
+        // its hljs colors leak into the heading/paragraph as inline
+        // <span style="color:...">, producing raw HTML on disk (the
+        // heading-absorption corruption, e.g. '## Heading<span ...>const').
+        // Prevent the native merge; the symmetric Backspace-at-code-start
+        // case is handled above.
+        if (e.key === 'Delete' && !e.isComposing) {
+          const sel = window.getSelection();
+          if (sel.rangeCount && sel.isCollapsed) {
+            const range = sel.getRangeAt(0);
+            let block = range.startContainer;
+            block = block.nodeType === Node.ELEMENT_NODE ? block : block.parentNode;
+            while (block && block.parentNode !== this.element) block = block.parentNode;
+            if (block && this.element.contains(block) && block.tagName !== 'PRE') {
+              // Caret at the end of this block? (ignore trailing UI spans)
+              const tail = document.createRange();
+              tail.selectNodeContents(block);
+              tail.setStart(range.startContainer, range.startOffset);
+              const frag = tail.cloneContents();
+              frag.querySelectorAll('.inkwell-drag-handle, .inkwell-fold-toggle').forEach(x => x.remove());
+              const atEnd = frag.textContent === '';
+              const next = block.nextElementSibling;
+              const protectedNext = next && (next.tagName === 'PRE' ||
+                (next.classList && next.classList.contains('inkwell-block-renderer')));
+              if (atEnd && protectedNext) {
+                e.preventDefault();
+                return;
+              }
+            }
+          }
+        }
         // Handle Enter for block-level conversions
         if (e.key === 'Enter' && !e.shiftKey) {
           if (LiveConverter.onEnter(e)) return;
