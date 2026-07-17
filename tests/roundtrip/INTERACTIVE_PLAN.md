@@ -72,6 +72,20 @@ keydown 覆盖「键入/删除/Enter/进出编辑」到达的**同一段 JS 代�
 
 场景 2 与 6 是标题吞并最可能的复现路径,优先。
 
+## 实施记录(2026-07-17)
+
+**已落地**:`RoundTripHarness` 交互原语 + `window.__IE` 注入(caret / pressKey / editCycle / invariants / selectFromEndIntoCode)+ `InteractiveEditTests`。
+
+**关键方法论修正**:实测 `execCommand('forwardDelete')` **既不触发 keydown 也不触发 `beforeinput`**(`beforeinputFired: []`),直接走原生编辑——它触发损坏但**绕过一切守卫**,故不能用来验证守卫修复。删除类守卫一律经**合成 keydown 检查 `defaultPrevented`**:真实按键走同一 keydown 路径,`preventDefault` 正是阻止 WebKit 原生合并的机制。这是 Approach A 在删除场景下的落地形态。合成 keydown 无法触发原生合并(untrusted),故断言的是「守卫是否 preventDefault」,不是「合并是否发生」——对真实用户等价。
+
+**已修的标题吞并(两条)**:
+- 场景 2 边界 forward-delete:标题/段落尾 Delete、下一块受保护 → 加 keydown Delete 守卫(镜像现有 Backspace 守卫)。`testDelete{Heading,Paragraph}EndBeforeCode` 红→绿。
+- 场景 6 跨块选区部分切入:非塌陷选区端点严格落在受保护块内部且有残余 → preventDefault(方案 A);完整包含则放行。`testCrossBlockDeletePartialCut` 红→绿,`…FullBlockIsAllowed` 绿。
+
+**已验证干净(绿基线)**:场景 1 进出编辑 math/mermaid round-trip + DOM 不变量;现有 Backspace@code-start 守卫。
+
+**留待后续**:场景 3(块尾 forwardDelete 其他组合)、4(现场转换后离开)、5(快速进出压测)可增量补入。#7 段落模型 + Enter/Shift+Enter 交互场景作为独立 PR。
+
 ## 6. 文件落点
 
 - Harness 扩展:`InkwellTests/RoundTripHarness.swift`(加原语)或新 `InteractiveHarness.swift`。

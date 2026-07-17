@@ -492,6 +492,15 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 
 **判定**:#2/#3 及 mermaid 出口要么已被其后的修复消解,要么源自测试网不覆盖的交互编辑路径。当前无 live 复现,依「找不到如实报告」不盲修。若日后重现,证据指向交互编辑(contentEditable 块合并),而非 parser/serializer 纯路径。
 
+### 标题吞并(#2/#3)已在交互路径定位并修复(2026-07-17,Step 5)
+
+Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 round-trip 够不到。交互网(`InkwellTests/InteractiveEditTests` + `INTERACTIVE_PLAN.md`)建成后**确定性复现**:
+
+- **边界 forward-delete**:标题/段落尾按 Delete、下一块是渲染代码块 → WebKit 把代码文本化合并进标题,hljs 颜色以 inline `<span style="color:...">` 泄漏落盘(正是磁盘上 `## 6. Pie Chart<span style=…>` 的活体)。编辑器此前**对 Delete 键零守卫**。
+- **跨块选区部分切入**:选区从文本块跨入代码块中部删除,残余代码文本化并入前块。
+
+两者已修(keydown Delete 守卫 + 跨块部分切入守卫,方案 A),经 keydown `defaultPrevented` 验证(execCommand 绕过 keydown/beforeinput,不能验证守卫——见 INTERACTIVE_PLAN 实施记录)。#2(span 泄漏)与 #3(标题编号被吃)同属此路径的产物:span 泄漏即上述颜色泄漏;编号被吃是合并时标题前缀文本受损。渲染块(mermaid/math div)不文本化,天然免疫。
+
 复现手段:`scratchpad/harness` —— 取真实 editor.html,仅把 `inkwell-asset:///` 改写为 http 路径,其余一字不动,在浏览器里跑 `InkwellEditor.loadMarkdown()` → `getMarkdown()` 对比。快速迭代用;正式回归以 `InkwellTests/RoundTripTests`(离屏 WKWebView + 真 Bundle 资产)为准。
 
 **测试网已补齐**:`tests/roundtrip/` + `InkwellTests/RoundTripTests` 是常驻交付物,经 `xcodebuild test` 运行,覆盖上述纯 round-trip 路径。交互编辑路径的自动化仍是缺口。
