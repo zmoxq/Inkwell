@@ -150,6 +150,61 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
         try await getMarkdown()
     }
 
+    // MARK: - Undo sequences
+
+    private func eval(_ js: String) async throws { _ = try await webView.evaluateJavaScript(js) }
+    private func evalBool(_ js: String) async throws -> Bool { (try await webView.evaluateJavaScript(js) as? Bool) ?? false }
+    private func settleShort() async throws { try await Task.sleep(nanoseconds: 200_000_000) }
+
+    struct UndoOutcome { let colorLeak: Bool; let stable: Bool; let markdown: String; let editing: Bool }
+
+    private func undoOutcome() async throws -> UndoOutcome {
+        let leak = try await evalBool("window.__IE.undoColorLeak()")
+        let a = try await getMarkdown()
+        let b = try await getMarkdown()
+        let editing = try await evalBool("(typeof EditMode!=='undefined' && EditMode._editingFence!==null)")
+        return UndoOutcome(colorLeak: leak, stable: a == b, markdown: a, editing: editing)
+    }
+
+    /// Sequence 1: enter edit, leave (render), then undo.
+    func undoAfterLeaveEdit(_ md: String, selector: String) async throws -> UndoOutcome {
+        try await load(md)
+        try await eval("window.__IE.enterEditFirst(\(jsStringLiteral(selector)))"); try await settleShort()
+        try await eval("window.__IE.leaveEditActive()"); try await settleShort()
+        try await eval("window.__IE.undo()"); try await settleShort()
+        return try await undoOutcome()
+    }
+
+    /// Sequence 2: Backspace-degrade an empty code block, then undo.
+    func undoAfterEmptyDegrade(_ md: String) async throws -> UndoOutcome {
+        try await load(md)
+        try await eval("window.__IE.degradeEmptyCode()"); try await settleShort()
+        try await eval("window.__IE.undo()"); try await settleShort()
+        return try await undoOutcome()
+    }
+
+    /// Sequence 3: enter edit, then immediately undo (still editing after).
+    func undoImmediatelyAfterEnterEdit(_ md: String, selector: String) async throws -> UndoOutcome {
+        try await load(md)
+        try await eval("window.__IE.enterEditFirst(\(jsStringLiteral(selector)))"); try await settleShort()
+        try await eval("window.__IE.undo()"); try await settleShort()
+        return try await undoOutcome()
+    }
+
+    /// Sequence 5: edit two blocks in turn, then undo twice.
+    func undoMultiBlock(_ md: String) async throws -> UndoOutcome {
+        try await load(md)
+        // First renderer.
+        try await eval("window.__IE.enterEditFirst('.inkwell-block-renderer')"); try await settleShort()
+        try await eval("window.__IE.leaveEditActive()"); try await settleShort()
+        // Last renderer (the second block).
+        try await eval("(function(){ var rs=window.__IE.ed.querySelectorAll('.inkwell-block-renderer'); if(rs.length){ EditMode.requestEnterEdit(rs[rs.length-1],{via:'click'}); } })()"); try await settleShort()
+        try await eval("window.__IE.leaveEditActive()"); try await settleShort()
+        try await eval("window.__IE.undo()"); try await settleShort()
+        try await eval("window.__IE.undo()"); try await settleShort()
+        return try await undoOutcome()
+    }
+
     // MARK: - beforeinput backstop (menu / dictation / system-replace path)
 
     /// Places the caret at the end of `selector` and dispatches a synthetic
@@ -221,6 +276,11 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
             var r=document.createRange(); r.setStart(ft, ft.textContent.length); r.setEnd(ct, endOff);
             var s=getSelection(); s.removeAllRanges(); s.addRange(r); return true; },
           editCycle: function(sel){ var el=this.ed.querySelector(sel); if(!el||typeof EditMode==='undefined') return false; EditMode.requestEnterEdit(el,{via:'click'}); var f=this.ed.querySelector('pre[data-block-type]') || (this.ed.querySelector('code.inkwell-live-fence') && this.ed.querySelector('code.inkwell-live-fence').closest('pre')); if(!f) return false; EditMode.requestLeaveEdit(f); return true; },
+          enterEditFirst: function(sel){ var el=this.ed.querySelector(sel); if(!el||typeof EditMode==='undefined') return false; EditMode.requestEnterEdit(el,{via:'click'}); return true; },
+          leaveEditActive: function(){ var f=this.ed.querySelector('pre[data-block-type]'); if(!f) return false; EditMode.requestLeaveEdit(f); return true; },
+          undo: function(){ document.execCommand('undo'); return true; },
+          degradeEmptyCode: function(){ var code=this.ed.querySelector('pre code'); if(!code) return false; this.ed.focus(); var r=document.createRange(); r.setStart(code.firstChild||code,0); r.collapse(true); var s=getSelection(); s.removeAllRanges(); s.addRange(r); var e=new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true}); this.ed.dispatchEvent(e); return e.defaultPrevented; },
+          undoColorLeak: function(){ return this.invariants().indexOf('color-span-loose')>=0 || this.invariants().indexOf('styled-span-in-heading')>=0; },
           invariants: function(){ var v=[]; var ed=this.ed;
             ed.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function(h){ if(h.querySelector('pre,div,table,ul,ol,blockquote')) v.push('block-in-heading'); h.querySelectorAll('span[style]').forEach(function(s){ if(/color/.test(s.getAttribute('style')||'')) v.push('styled-span-in-heading'); }); });
             ed.querySelectorAll('span[style]').forEach(function(s){ if(/color/.test(s.getAttribute('style')||'') && !s.closest('pre') && !s.closest('code')) v.push('color-span-loose'); });

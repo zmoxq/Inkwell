@@ -86,6 +86,20 @@ keydown 覆盖「键入/删除/Enter/进出编辑」到达的**同一段 JS 代�
 
 **留待后续**:场景 3(块尾 forwardDelete 其他组合)、4(现场转换后离开)、5(快速进出压测)可增量补入。#7 段落模型 + Enter/Shift+Enter 交互场景作为独立 PR。
 
+### 补充实施(2026-07-17)
+
+**#7 Enter/Shift+Enter**:已进网(`testShiftEnterInsertsHardBreak`、`testShiftEnterGuardedDuringComposition`)。
+
+**beforeinput 纵深守卫**:验证结论——菜单/听写/系统替换类删除按 Input Events 规范 fire `beforeinput`(deleteContentForward/Backward)但**不 fire keydown**,是 keydown 守卫盲区;`execCommand` 两者都不 fire,属程序化非用户路径不计。已加 beforeinput 兜底(镜像边界/跨块逻辑),经合成 `beforeinput`(可 dispatch 且可取消,与 execCommand 不同)验证:4 个测试覆盖受保护边界拦截 + mid-content/完整选区放行。
+
+**undo 五序列**:D1 裁决——enter/leave-edit 走 `replaceChild`,不进浏览器 undo 栈;`execCommand('undo')` 跨转换为**无操作**,且**不损坏**(实测:块结构稳定、无 HTML 泄漏、md 幂等)。四序列已自动化进网:
+- 序列 1 打字离开渲染 → undo(`testUndoAfterTypeLeaveRender`)
+- 序列 2 空块退化 → undo(`testUndoAfterEmptyBlockDegrade`)
+- 序列 3 enter-edit 立即 undo(`testUndoImmediatelyAfterEnterEdit`,undo 后仍在编辑态=D1 正确)
+- 序列 5 多块编辑多级 undo(`testUndoMultiBlockMultiLevel`)
+
+**序列 4(abort-to-edit 中断)未自动化,留人工**:该序列需在异步渲染**在飞**时插入 enter-edit 以触发 abort;实测 mermaid 加载 25ms 后 block 已渲染完、abort controller 已不存在,abort 窗口 <25ms,harness 的 evaluateJavaScript 往返 + loadMarkdown/render 无法在该窗口内可靠插入 enter-edit(多次尝试导致 harness 卡死)。人工验收:加载一个较重的 mermaid 图,在其渲染动画未完成时点击进入编辑,再 Cmd+Z,确认不残留半渲染 DOM、不崩、源码完整。
+
 ## 6. 文件落点
 
 - Harness 扩展:`InkwellTests/RoundTripHarness.swift`(加原语)或新 `InteractiveHarness.swift`。

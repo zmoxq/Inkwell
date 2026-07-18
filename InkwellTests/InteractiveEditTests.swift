@@ -172,4 +172,43 @@ final class InteractiveEditTests: XCTestCase {
         )
         XCTAssertFalse(prevented, "beforeinput delete away from a protected boundary must be allowed")
     }
+
+    // MARK: - Undo across edit-mode transitions (D1)
+    //
+    // enter/leave-edit uses replaceChild, which does not enter the browser
+    // undo stack (PHASE_3_5_EDITMODE §D1). execCommand('undo') across a
+    // transition is therefore a no-op — these tests lock in that it does NOT
+    // corrupt (no resurrected/leaked content, DOM stays sane, markdown
+    // stable). Sequence 4 (abort-to-edit) is NOT covered: its abort window is
+    // sub-25ms, too tight for the harness to interpose — left to manual
+    // verification (see INTERACTIVE_PLAN).
+
+    func testUndoAfterTypeLeaveRender() async throws {   // sequence 1
+        let out = try await harness().undoAfterLeaveEdit("$$\nE = mc^2\n$$\n", selector: ".inkwell-block-renderer")
+        XCTAssertFalse(out.colorLeak, "no leaked HTML after undo")
+        XCTAssertTrue(out.stable, "markdown stable after undo")
+        XCTAssertEqual(canonicalized(out.markdown), "$$\nE = mc^2\n$$")
+    }
+
+    func testUndoAfterEmptyBlockDegrade() async throws {   // sequence 2
+        let out = try await harness().undoAfterEmptyDegrade("text\n\n```\n\n```\n")
+        XCTAssertFalse(out.colorLeak, "no leaked HTML after undo")
+        XCTAssertTrue(out.stable, "markdown stable after undo")
+        XCTAssertEqual(canonicalized(out.markdown), "text")
+    }
+
+    func testUndoImmediatelyAfterEnterEdit() async throws {   // sequence 3
+        let out = try await harness().undoImmediatelyAfterEnterEdit("$$\nE = mc^2\n$$\n", selector: ".inkwell-block-renderer")
+        XCTAssertFalse(out.colorLeak, "no leaked HTML after undo")
+        XCTAssertTrue(out.stable, "markdown stable after undo")
+        // Transition is not on the undo stack: still editing, source intact.
+        XCTAssertEqual(canonicalized(out.markdown), "$$\nE = mc^2\n$$")
+    }
+
+    func testUndoMultiBlockMultiLevel() async throws {   // sequence 5
+        let out = try await harness().undoMultiBlock("$$\na\n$$\n\n$$\nb\n$$\n")
+        XCTAssertFalse(out.colorLeak, "no leaked HTML after multi-level undo")
+        XCTAssertTrue(out.stable, "markdown stable after multi-level undo")
+        XCTAssertEqual(canonicalized(out.markdown), "$$\na\n$$\n\n$$\nb\n$$")
+    }
 }
