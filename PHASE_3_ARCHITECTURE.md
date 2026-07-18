@@ -463,7 +463,7 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 | # | 症状 | 状态 |
 |---|---|---|
 | 6 | 嵌套/缩进列表项之间被增删空行(tight↔loose 漂移) | **已修**(2026-07-17,parseList 递归嵌套 + serializeList 按 marker 宽度缩进;方案 C)。测试网 `testNestedList` / `testNestedListOrdered` / `testListSiblings` |
-| 7 | 软换行段落(相邻两行无空行)被拆成两段 | 开放,**只侦查不修**(见下「#7 侦查结论」)。设计裁决未定 |
+| 7 | 软换行段落(相邻两行无空行)被拆成两段 | **已修**(2026-07-17,段落模型 PR:parser 段内合行 + Shift+Enter 硬换行 `<br>`↔`\`)。见下「#7 段落模型」 |
 | 8 | 表格列对齐一律塌成居中(`:---` / `---` → `:---:`) | **已修**(2026-07-17,serializeTable 无 inline align 的列输出 `---` 而非 `:---:`)。测试网 `testTableAlignment` |
 
 行内 emphasis 标记规范化:真 `_emphasis_` → `*emphasis*`(标记风格统一,语义不变)。已由金标断言锚定(`testEmphasisMarkerNormalization`),论证见 `tests/roundtrip/NORMALIZATION.md`。
@@ -481,6 +481,17 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 - 方案「维持拆段」(现状):每行一段,改变渲染语义(一段变两段视觉块),round-trip 插空行。
 
 **张力**:Inkwell 是 WYSIWYG——Enter 通常意味着新段落,Shift+Enter 才是段内换行。若 parser 把 `line1\nline2` 合成一段,与「Enter=新段」的编辑模型可能冲突。这是渲染语义(CommonMark)与编辑 UX(WYSIWYG per-line 段落)之间的真实取舍,须设计侧定夺,本程不改。
+
+### #7 段落模型(2026-07-17,已裁决并实现)
+
+裁决采「段内合行」(贴合 CommonMark),而非维持拆段。实现:
+
+- **Parser**:连续非空非块级行归入同一 `<p>`(`_startsBlock` 判块界);软换行折为空格,硬换行(行尾 `\` 或两尾空格)成 `<br>`。
+- **Enter / Shift+Enter**:Enter 仍是新段落(原生);Shift+Enter 显式拦截插确定性 `<br>`,`!isComposing` 守卫(IME 组合期间不拆);光标落 `<br>` 之后。
+- **序列化**:`<br>`↔ 行尾 `\`(规范硬换行);但空段落占位 `<p><br></p>` 的 `<br>`(后无内容)不输出 `\`,避免边缘占位符渗出杂散反斜杠。
+- **规范化**(白名单 + 金标,见 `tests/roundtrip/NORMALIZATION.md`):软换行折为一行(位置丢失);块间无空行→空行分隔;两尾空格→`\`。smoke-katex/-mermaid 配 `.expected.md` 金标转绿。
+
+**既有文档渲染观感变化(用户须知)**:此前用软换行写作的 `.md`,每行显示为独立小段(带段间距);改后连续软换行行**合为一个随宽度重排的段落**(无段间距),与 GitHub/Typora 对软换行的渲染一致,是修正非退化。明确的 Shift+Enter / 行尾 `\` 硬换行保留为 `<br>`,不受影响。折叠发生在**加载时**,首次保存即写回折叠形态(段落一行);用户若要保留换行须改用硬换行——这是一次性规范化迁移。
 
 ### 侦查结论(2026-07-16,Step 3)
 

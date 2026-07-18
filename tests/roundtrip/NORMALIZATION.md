@@ -39,6 +39,31 @@ The serializer emits all emphasis with asterisks: real `_emphasis_` becomes
   against golden `emphasis-marker.expected.md` (`testEmphasisMarkerNormalization`).
   The normalization is pinned, never left unasserted.
 
+## Per-fixture normalization: soft-wrap paragraph fold (#7)
+
+Consecutive soft-wrapped lines (no blank line, no block interruption) are one
+paragraph in CommonMark. The parser folds them into a single reflowed `<p>`;
+serialization emits one line, so the original wrap positions are lost.
+
+- **Why it is not corruption**: CommonMark (and GitHub/Typora) render a
+  soft-wrapped paragraph as one reflowed paragraph — the wrap positions are
+  presentational, not content. Every word survives; only the newline
+  positions inside the paragraph change.
+- **Hard breaks are preserved**: a line ending with `\` (or two spaces) is a
+  hard break — kept as a `<br>` and serialized back to `\` byte-exact
+  (`testHardBreak`). Two trailing spaces normalize to `\` (chosen form).
+- **How the net asserts it**: `soft-wrap.md` → `soft-wrap.expected.md`
+  (`testSoftWrapFold`). The smoke files fold their multi-line blockquotes the
+  same way and assert against goldens (`testSmokeMermaid`, `testSmokeKatex`).
+
+## Per-fixture normalization: block adjacency (#7)
+
+Two blocks written with no blank line between them (e.g. a paragraph
+immediately followed by a list) are separated by one blank line on
+serialize. They already parse as two blocks; the blank line is added by the
+block separator. Semantically identical rendering; captured in the
+smoke-katex golden.
+
 ## Adding a genuine normalization later (mechanism)
 
 Give the fixture a sibling golden file `<name>.expected.md`, assert with
