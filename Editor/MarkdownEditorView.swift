@@ -73,6 +73,13 @@ struct EditorWebViewRepresentable: NSViewRepresentable {
             theme: themeCSS
         )
     }
+
+    static func dismantleNSView(_ webView: WKWebView, coordinator: EditorCoordinator) {
+        webView.stopLoading()
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        webView.navigationDelegate = nil
+        webView.loadHTMLString("", baseURL: nil)
+    }
 }
 #else
 struct EditorWebViewRepresentable: UIViewRepresentable {
@@ -113,8 +120,39 @@ struct EditorWebViewRepresentable: UIViewRepresentable {
             theme: themeCSS
         )
     }
+
+    static func dismantleUIView(_ webView: WKWebView, coordinator: EditorCoordinator) {
+        webView.stopLoading()
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        webView.navigationDelegate = nil
+        webView.loadHTMLString("", baseURL: nil)
+    }
 }
 #endif
+
+// MARK: - Weak Script Message Handler
+//
+// WKUserContentController retains its message handlers strongly. Registering
+// the Coordinator directly (`contentController.add(self, ...)`) creates a
+// retain cycle: Coordinator -> WKWebView -> configuration.userContentController
+// -> Coordinator. That cycle is why WKWebView / "Inkwell Web Content" processes
+// never got released after a document closed. This proxy breaks the cycle by
+// holding the real handler weakly.
+final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    private weak var delegate: WKScriptMessageHandler?
+
+    init(delegate: WKScriptMessageHandler) {
+        self.delegate = delegate
+        super.init()
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        delegate?.userContentController(userContentController, didReceive: message)
+    }
+}
 
 // MARK: - Editor Coordinator
 
@@ -178,7 +216,7 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     func createWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
         let contentController = WKUserContentController()
-        contentController.add(self, name: "inkwell")
+        contentController.add(WeakScriptMessageHandler(delegate: self), name: "inkwell")
         config.userContentController = contentController
         config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
 
