@@ -110,4 +110,29 @@ final class InteractiveEditTests: XCTestCase {
         )
         XCTAssertFalse(prevented, "Deleting a fully-selected code block must be allowed")
     }
+
+    // MARK: - Shift+Enter hard break (#7)
+
+    func testShiftEnterInsertsHardBreak() async throws {
+        // Shift+Enter inside a paragraph inserts a deterministic <br> and
+        // serializes it as a trailing backslash hard break, round-tripping
+        // byte-exact.
+        let (prevented, brCount) = try await harness().shiftEnter(
+            "hello world", selector: "p", offset: 5
+        )
+        XCTAssertTrue(prevented, "Shift+Enter must be handled")
+        XCTAssertEqual(brCount, 1, "Shift+Enter inserts exactly one <br>")
+        let out = try await harness().serialize()
+        XCTAssertTrue(out.contains("\\\n"), "hard break serializes to a trailing backslash; got \(out)")
+    }
+
+    func testShiftEnterGuardedDuringComposition() async throws {
+        // During IME composition, Shift+Enter must NOT be intercepted (the
+        // composed segment must never be split).
+        let (prevented, brCount) = try await harness().shiftEnter(
+            "abc", selector: "p", offset: 3, composing: true
+        )
+        XCTAssertFalse(prevented, "Shift+Enter must not be intercepted mid-composition")
+        XCTAssertEqual(brCount, 0, "no <br> inserted during composition")
+    }
 }

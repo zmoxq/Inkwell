@@ -130,6 +130,26 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
         return (result as? [String]) ?? []
     }
 
+    /// Places the caret at `offset` within the first text node of the block
+    /// matching `selector`, dispatches Shift+Enter (optionally flagged as an
+    /// IME composition), and returns whether it was handled (default
+    /// prevented) plus the resulting <br> count. A real Shift+Enter takes the
+    /// same keydown path.
+    func shiftEnter(
+        _ markdown: String, selector: String, offset: Int, composing: Bool = false
+    ) async throws -> (prevented: Bool, brCount: Int) {
+        try await load(markdown)
+        let js = "window.__IE.shiftEnterAt(\(jsStringLiteral(selector)), \(offset), \(composing))"
+        let result = try await webView.evaluateJavaScript(js)
+        let dict = result as? [String: Any]
+        return ((dict?["prevented"] as? Bool) ?? false, (dict?["brCount"] as? Int) ?? 0)
+    }
+
+    /// The current serialized markdown (public wrapper over getMarkdown).
+    func serialize() async throws -> String {
+        try await getMarkdown()
+    }
+
     /// Selects a range from the end of the first block matching `fromSelector`
     /// to a position inside the first code block, then dispatches `key` and
     /// returns whether the default was prevented. `codeOffset` is a fraction
@@ -162,6 +182,14 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
           pressKey: function(key){ var e=new KeyboardEvent('keydown',{key:key,bubbles:true,cancelable:true}); this.ed.dispatchEvent(e); return e.defaultPrevented; },
           _lastText: function(el){ var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT); var n, last=null; while(n=w.nextNode()) last=n; return last; },
           _firstText: function(el){ var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT); return w.nextNode(); },
+          shiftEnterAt: function(sel, offset, composing){ var el=this.ed.querySelector(sel); if(!el) return null; this.ed.focus();
+            var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: function(n){ return (n.parentElement && n.parentElement.closest('.inkwell-drag-handle, .inkwell-fold-toggle')) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+            var tn=w.nextNode(); if(!tn) return null;
+            var r=document.createRange(); r.setStart(tn, Math.min(offset, tn.textContent.length)); r.collapse(true);
+            var s=getSelection(); s.removeAllRanges(); s.addRange(r);
+            var e=new KeyboardEvent('keydown',{key:'Enter',shiftKey:true,isComposing:!!composing,bubbles:true,cancelable:true});
+            this.ed.dispatchEvent(e);
+            return { prevented: e.defaultPrevented, brCount: el.querySelectorAll('br').length }; },
           selectFromEndIntoCode: function(fromSel, frac){ var from=this.ed.querySelector(fromSel); var code=this.ed.querySelector('pre code'); if(!from||!code) return false; this.ed.focus();
             var ft=this._lastText(from), ct=this._firstText(code); if(!ft||!ct) return false;
             var endOff = Math.min(ct.textContent.length, Math.max(0, Math.round(ct.textContent.length*frac)));

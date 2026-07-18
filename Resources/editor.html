@@ -5655,6 +5655,26 @@
             }
           }
         }
+        // Shift+Enter: explicit hard line break within the block. Insert a
+        // deterministic <br> (not WebKit's default, which varies by engine)
+        // and place the caret after it. Skipped during IME composition so a
+        // composed segment is never split.
+        if (e.key === 'Enter' && e.shiftKey && !e.isComposing) {
+          const sel = window.getSelection();
+          if (sel.rangeCount) {
+            e.preventDefault();
+            const range = sel.getRangeAt(0);
+            range.deleteContents();
+            const br = document.createElement('br');
+            range.insertNode(br);
+            range.setStartAfter(br);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            this.onContentChange();
+            return;
+          }
+        }
         // Handle Enter for block-level conversions
         if (e.key === 'Enter' && !e.shiftKey) {
           if (LiveConverter.onEnter(e)) return;
