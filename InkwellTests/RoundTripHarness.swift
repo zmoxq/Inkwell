@@ -150,6 +150,29 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
         try await getMarkdown()
     }
 
+    // MARK: - beforeinput backstop (menu / dictation / system-replace path)
+
+    /// Places the caret at the end of `selector` and dispatches a synthetic
+    /// `beforeinput` (the chokepoint menu/dictation deletes use), returning
+    /// whether the backstop prevented it.
+    func beforeinputPreventedAtEndOf(_ md: String, selector: String, inputType: String) async throws -> Bool {
+        try await load(md)
+        let js = "(function(){ if(!window.__IE.caretEndOf(\(jsStringLiteral(selector)))) return null; return window.__IE.fireBeforeinput(\(jsStringLiteral(inputType))); })()"
+        return (try await webView.evaluateJavaScript(js) as? Bool) ?? false
+    }
+
+    func beforeinputPreventedAtCodeStart(_ md: String, inputType: String) async throws -> Bool {
+        try await load(md)
+        let js = "(function(){ if(!window.__IE.caretStartOfCode()) return null; return window.__IE.fireBeforeinput(\(jsStringLiteral(inputType))); })()"
+        return (try await webView.evaluateJavaScript(js) as? Bool) ?? false
+    }
+
+    func beforeinputPreventedForCrossBlock(_ md: String, fromSelector: String, codeFraction: Double, inputType: String) async throws -> Bool {
+        try await load(md)
+        let js = "(function(){ if(!window.__IE.selectFromEndIntoCode(\(jsStringLiteral(fromSelector)), \(codeFraction))) return null; return window.__IE.fireBeforeinput(\(jsStringLiteral(inputType))); })()"
+        return (try await webView.evaluateJavaScript(js) as? Bool) ?? false
+    }
+
     /// Selects a range from the end of the first block matching `fromSelector`
     /// to a position inside the first code block, then dispatches `key` and
     /// returns whether the default was prevented. `codeOffset` is a fraction
@@ -180,6 +203,7 @@ final class RoundTripHarness: NSObject, WKNavigationDelegate {
           caretEndOf: function(sel){ var el=this.ed.querySelector(sel); if(!el) return false; this.ed.focus(); var r=document.createRange(); r.selectNodeContents(el); r.collapse(false); var s=getSelection(); s.removeAllRanges(); s.addRange(r); return true; },
           caretStartOfCode: function(){ var code=this.ed.querySelector('pre code'); if(!code) return false; this.ed.focus(); var r=document.createRange(); r.setStart(code.firstChild||code,0); r.collapse(true); var s=getSelection(); s.removeAllRanges(); s.addRange(r); return true; },
           pressKey: function(key){ var e=new KeyboardEvent('keydown',{key:key,bubbles:true,cancelable:true}); this.ed.dispatchEvent(e); return e.defaultPrevented; },
+          fireBeforeinput: function(inputType){ var e=new InputEvent('beforeinput',{inputType:inputType,cancelable:true,bubbles:true}); this.ed.dispatchEvent(e); return e.defaultPrevented; },
           _lastText: function(el){ var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT); var n, last=null; while(n=w.nextNode()) last=n; return last; },
           _firstText: function(el){ var w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT); return w.nextNode(); },
           shiftEnterAt: function(sel, offset, composing){ var el=this.ed.querySelector(sel); if(!el) return null; this.ed.focus();

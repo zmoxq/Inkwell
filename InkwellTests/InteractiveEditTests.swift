@@ -135,4 +135,41 @@ final class InteractiveEditTests: XCTestCase {
         XCTAssertFalse(prevented, "Shift+Enter must not be intercepted mid-composition")
         XCTAssertEqual(brCount, 0, "no <br> inserted during composition")
     }
+
+    // MARK: - beforeinput backstop (menu / dictation / system replace)
+    //
+    // These deletion paths fire beforeinput without a keydown, bypassing the
+    // keydown guards. The beforeinput backstop must catch the same
+    // corrupting cases.
+
+    func testBeforeInputForwardDeleteAtBoundaryGuarded() async throws {
+        let prevented = try await harness().beforeinputPreventedAtEndOf(
+            "## Heading\n\n```js\nconst x = 1;\n```\n", selector: "h2", inputType: "deleteContentForward"
+        )
+        XCTAssertTrue(prevented, "beforeinput forward-delete at a heading/code boundary must be prevented")
+    }
+
+    func testBeforeInputBackwardDeleteAtCodeStartGuarded() async throws {
+        let prevented = try await harness().beforeinputPreventedAtCodeStart(
+            "## Heading\n\n```js\nconst x = 1;\n```\n", inputType: "deleteContentBackward"
+        )
+        XCTAssertTrue(prevented, "beforeinput backward-delete at a code block start must be prevented")
+    }
+
+    func testBeforeInputCrossBlockPartialCutGuarded() async throws {
+        let prevented = try await harness().beforeinputPreventedForCrossBlock(
+            "## Heading\n\n```js\nconst x = 1;\n```\n", fromSelector: "h2", codeFraction: 0.4,
+            inputType: "deleteContentBackward"
+        )
+        XCTAssertTrue(prevented, "beforeinput partial cross-block cut must be prevented")
+    }
+
+    func testBeforeInputMidContentAllowed() async throws {
+        // A delete not at a protected boundary must pass through the backstop
+        // untouched (no over-prevention of normal editing).
+        let prevented = try await harness().beforeinputPreventedAtEndOf(
+            "para one\n\npara two", selector: "p", inputType: "deleteContentForward"
+        )
+        XCTAssertFalse(prevented, "beforeinput delete away from a protected boundary must be allowed")
+    }
 }

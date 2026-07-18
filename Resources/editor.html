@@ -5493,6 +5493,66 @@
         SlashMenu.onInput(e);
       });
 
+      // Defense-in-depth backstop for block-merge corruption. The keydown
+      // guards only see keyboard deletes; deletions from the Edit menu,
+      // dictation, or system text replacement fire beforeinput (inputType
+      // deleteContentForward/Backward) WITHOUT a keydown. beforeinput is the
+      // common chokepoint for all of them, so the same boundary/partial-cut
+      // logic is repeated here (deliberate duplication of the keydown guards).
+      this.element.addEventListener('beforeinput', (e) => {
+        if (e.inputType !== 'deleteContentForward' && e.inputType !== 'deleteContentBackward') return;
+        const sel = window.getSelection();
+        if (!sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        const protectedAncestor = (node) => {
+          let n = node && node.nodeType === Node.ELEMENT_NODE ? node : (node ? node.parentNode : null);
+          while (n && n !== this.element) {
+            if (n.tagName === 'PRE' || (n.classList && n.classList.contains('inkwell-block-renderer'))) return n;
+            n = n.parentNode;
+          }
+          return null;
+        };
+        const isProtected = (el) => el && (el.tagName === 'PRE' || (el.classList && el.classList.contains('inkwell-block-renderer')));
+        const topBlock = (node) => {
+          let b = node && node.nodeType === Node.ELEMENT_NODE ? node : (node ? node.parentNode : null);
+          while (b && b.parentNode !== this.element) b = b.parentNode;
+          return (b && this.element.contains(b)) ? b : null;
+        };
+        const cleanFrag = (r) => { const f = r.cloneContents(); f.querySelectorAll('.inkwell-drag-handle, .inkwell-fold-toggle').forEach(x => x.remove()); return f.textContent; };
+
+        if (!sel.isCollapsed) {
+          // Cross-block selection that partially cuts a protected block.
+          const startP = protectedAncestor(range.startContainer);
+          const endP = protectedAncestor(range.endContainer);
+          let partial = false;
+          if (endP && startP !== endP) {
+            const after = document.createRange(); after.selectNodeContents(endP); after.setStart(range.endContainer, range.endOffset);
+            if (after.toString().replace(/\s/g, '').length > 0) partial = true;
+          }
+          if (startP && startP !== endP) {
+            const before = document.createRange(); before.selectNodeContents(startP); before.setEnd(range.startContainer, range.startOffset);
+            if (before.toString().replace(/\s/g, '').length > 0) partial = true;
+          }
+          if (partial) e.preventDefault();
+          return;
+        }
+
+        const block = topBlock(range.startContainer);
+        if (!block) return;
+        if (e.inputType === 'deleteContentForward') {
+          if (block.tagName === 'PRE') return;
+          const tail = document.createRange(); tail.selectNodeContents(block); tail.setStart(range.startContainer, range.startOffset);
+          if (cleanFrag(tail) === '' && isProtected(block.nextElementSibling)) e.preventDefault();
+        } else {
+          // Backward-delete at the very start of a protected block merges it
+          // up into the previous block.
+          if (isProtected(block) && block.previousElementSibling) {
+            const head = document.createRange(); head.selectNodeContents(block); head.setEnd(range.startContainer, range.startOffset);
+            if (cleanFrag(head) === '') e.preventDefault();
+          }
+        }
+      });
+
       this.element.addEventListener('keydown', (e) => {
         // Slash menu intercepts first
         if (SlashMenu.handleKeyDown(e)) return;
