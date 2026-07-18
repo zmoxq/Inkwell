@@ -43,7 +43,10 @@ struct EditorWebViewRepresentable: NSViewRepresentable {
     var onSaveRequest: (() -> Void)?
     var onEditorReady: (() -> Void)?
     var onCoordinatorReady: ((EditorCoordinator) -> Void)?
-    
+
+    // DIAGNOSTIC (WKWebView leak investigation) — remove once leak is confirmed fixed.
+    static var makeCount = 0
+
     func makeCoordinator() -> EditorCoordinator {
         EditorCoordinator(
             markdownContent: $markdownContent,
@@ -54,14 +57,16 @@ struct EditorWebViewRepresentable: NSViewRepresentable {
             onEditorReady: onEditorReady
         )
     }
-    
+
     func makeNSView(context: Context) -> WKWebView {
+        Self.makeCount += 1
+        print("🏗️ makeNSView #\(Self.makeCount) file=\(documentURL?.lastPathComponent ?? "nil")")
         let webView = context.coordinator.createWebView()
         context.coordinator.loadEditorHTML()
         onCoordinatorReady?(context.coordinator)
         return webView
     }
-    
+
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.handleSwiftUIUpdate(
             markdown: markdownContent,
@@ -78,7 +83,10 @@ struct EditorWebViewRepresentable: UIViewRepresentable {
     var onSaveRequest: (() -> Void)?
     var onEditorReady: (() -> Void)?
     var onCoordinatorReady: ((EditorCoordinator) -> Void)?
-    
+
+    // DIAGNOSTIC (WKWebView leak investigation) — remove once leak is confirmed fixed.
+    static var makeCount = 0
+
     func makeCoordinator() -> EditorCoordinator {
         EditorCoordinator(
             markdownContent: $markdownContent,
@@ -89,14 +97,16 @@ struct EditorWebViewRepresentable: UIViewRepresentable {
             onEditorReady: onEditorReady
         )
     }
-    
+
     func makeUIView(context: Context) -> WKWebView {
+        Self.makeCount += 1
+        print("🏗️ makeUIView #\(Self.makeCount) file=\(documentURL?.lastPathComponent ?? "nil")")
         let webView = context.coordinator.createWebView()
         context.coordinator.loadEditorHTML()
         onCoordinatorReady?(context.coordinator)
         return webView
     }
-    
+
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.handleSwiftUIUpdate(
             markdown: markdownContent,
@@ -157,7 +167,12 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             self.pendingTheme = themeCSS
         }
     }
-    
+
+    // DIAGNOSTIC (WKWebView leak investigation) — remove once leak is confirmed fixed.
+    deinit {
+        print("🗑️ Coordinator deinit file=\(documentURL?.lastPathComponent ?? "nil")")
+    }
+
     // MARK: - WebView Setup
     
     func createWebView() -> WKWebView {
