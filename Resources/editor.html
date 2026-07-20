@@ -5449,6 +5449,10 @@
   const Editor = {
     element: null,
     lastContent: '',
+    // Snapshot of the caret/selection taken when this (resident) editor loses
+    // webView-level focus, so it can be restored on tab reactivation instead of
+    // collapsing to the document start. See snapshotSelection/restoreSelection.
+    _savedSelection: null,
 
     init() {
       this.element = document.getElementById('editor');
@@ -5742,6 +5746,12 @@
       });
 
       document.addEventListener('selectionchange', () => this.updateSelectionState());
+
+      // Snapshot the caret when this resident editor loses webView-level focus
+      // (e.g. switching to another tab). At blur time WebKit still exposes the
+      // last in-editor selection, so this captures the pre-blur position for
+      // restoreSelection() to reinstate on reactivation.
+      this.element.addEventListener('blur', () => this.snapshotSelection());
 
       this.setupKeyboardShortcuts();
 
@@ -6329,6 +6339,50 @@
 
     // --- Selection State ---
 
+    // Capture the current selection as live DOM node references + offsets. The
+    // resident editor's DOM survives tab switches, so node references stay valid
+    // (more robust than raw text offsets against a possibly-changed DOM).
+    snapshotSelection() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      // Only snapshot selections that live inside this editor.
+      if (!this.element.contains(range.startContainer)) return;
+      this._savedSelection = {
+        startContainer: range.startContainer,
+        startOffset: range.startOffset,
+        endContainer: range.endContainer,
+        endOffset: range.endOffset
+      };
+    },
+
+    // Reinstate the snapshotted selection. Returns true on success. If no
+    // snapshot exists (cold start) or an anchor was detached from the DOM
+    // (e.g. its block was re-rendered while away), it bails WITHOUT moving the
+    // selection — deliberately never collapsing to the document start.
+    restoreSelection() {
+      const s = this._savedSelection;
+      if (!s) return false;
+      if (!this.element.contains(s.startContainer) || !this.element.contains(s.endContainer)) {
+        return false;
+      }
+      const clampOffset = (node, off) => {
+        const max = node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length;
+        return Math.min(off, max);
+      };
+      try {
+        const range = document.createRange();
+        range.setStart(s.startContainer, clampOffset(s.startContainer, s.startOffset));
+        range.setEnd(s.endContainer, clampOffset(s.endContainer, s.endOffset));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
+
     updateSelectionState() {
       const sel = window.getSelection();
       if (!sel.rangeCount) return;
@@ -6437,7 +6491,15 @@
     getMarkdown: () => Editor.getMarkdown(),
     applyTheme: (css) => Editor.applyTheme(css),
     execFormat: (cmd, param) => Editor.execFormat(cmd, param),
-    focus: () => Editor.element.focus(),
+    focus: () => {
+      // Restore the pre-blur caret only when focus is actually being regained
+      // (tab reactivation). If already focused, leave the live selection alone.
+      // Cold start has no snapshot, so restoreSelection() no-ops and the native
+      // focus() default (caret at start) stands.
+      const wasFocused = (document.activeElement === Editor.element);
+      Editor.element.focus();
+      if (!wasFocused) Editor.restoreSelection();
+    },
     scrollToHeading: (text, level) => {
       const headings = Editor.element.querySelectorAll('h' + level);
       for (const h of headings) {
