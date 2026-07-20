@@ -41,6 +41,12 @@ struct ContentView: View {
         .onChange(of: appState.activeTabId) { _, _ in
             if let doc = appState.currentDocument {
                 editingContent = doc.content
+            } else {
+                // Last tab closed → editorArea falls back to emptyStateView and
+                // no new coordinator-ready fires. Release the retained
+                // coordinator (and its WKWebView) instead of leaving it pinned
+                // in @State until the next document opens.
+                editorCoordinator = nil
             }
         }
         .onAppear {
