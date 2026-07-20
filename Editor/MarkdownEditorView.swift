@@ -47,8 +47,11 @@ struct EditorWebViewRepresentable: NSViewRepresentable {
     var onEditorReady: (() -> Void)?
     var onCoordinatorReady: ((EditorCoordinator) -> Void)?
 
-    // DIAGNOSTIC (WKWebView leak investigation) — remove once leak is confirmed fixed.
+    #if DEBUG
+    // Leak diagnostics (Debug only): counts WKWebView creations; pairs with the
+    // EditorCoordinator deinit log. Kept for future leak triage — never ships.
     static var makeCount = 0
+    #endif
 
     func makeCoordinator() -> EditorCoordinator {
         EditorCoordinator(
@@ -62,8 +65,10 @@ struct EditorWebViewRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
+        #if DEBUG
         Self.makeCount += 1
         print("🏗️ makeNSView #\(Self.makeCount) file=\(documentURL?.lastPathComponent ?? "nil")")
+        #endif
         let webView = context.coordinator.createWebView()
         context.coordinator.loadEditorHTML()
         onCoordinatorReady?(context.coordinator)
@@ -100,8 +105,11 @@ struct EditorWebViewRepresentable: UIViewRepresentable {
     var onEditorReady: (() -> Void)?
     var onCoordinatorReady: ((EditorCoordinator) -> Void)?
 
-    // DIAGNOSTIC (WKWebView leak investigation) — remove once leak is confirmed fixed.
+    #if DEBUG
+    // Leak diagnostics (Debug only): counts WKWebView creations; pairs with the
+    // EditorCoordinator deinit log. Kept for future leak triage — never ships.
     static var makeCount = 0
+    #endif
 
     func makeCoordinator() -> EditorCoordinator {
         EditorCoordinator(
@@ -115,8 +123,10 @@ struct EditorWebViewRepresentable: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
+        #if DEBUG
         Self.makeCount += 1
         print("🏗️ makeUIView #\(Self.makeCount) file=\(documentURL?.lastPathComponent ?? "nil")")
+        #endif
         let webView = context.coordinator.createWebView()
         context.coordinator.loadEditorHTML()
         onCoordinatorReady?(context.coordinator)
@@ -221,9 +231,12 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         }
     }
 
-    // DIAGNOSTIC (WKWebView leak investigation) — remove once leak is confirmed fixed.
     deinit {
+        #if DEBUG
+        // Leak diagnostics (Debug only): pairs with the makeNSView/makeUIView
+        // creation log so a leak shows up as make-count > deinit-count.
         print("🗑️ Coordinator deinit file=\(documentURL?.lastPathComponent ?? "nil")")
+        #endif
     }
 
     // MARK: - WebView Setup
