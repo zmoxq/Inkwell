@@ -6492,14 +6492,20 @@
     applyTheme: (css) => Editor.applyTheme(css),
     execFormat: (cmd, param) => Editor.execFormat(cmd, param),
     focus: () => {
-      // Restore the pre-blur caret only when focus is actually being regained
-      // (tab reactivation). If already focused, leave the live selection alone.
-      // Cold start has no snapshot, so restoreSelection() no-ops and the native
-      // focus() default (caret at start) stands.
-      const wasFocused = (document.activeElement === Editor.element);
+      // Reactivating a resident tab: focus the element, then reinstate the
+      // caret snapshotted when this editor was last left. restoreSelection()
+      // no-ops on cold start (no snapshot) and bails on a detached anchor, so
+      // it never wrongly moves the caret — hence it can run unconditionally.
+      // (An earlier `wasFocused` guard broke this: on first-responder regain
+      // WebKit refocuses the element before this runs, so activeElement was
+      // already the editor and restore was skipped.)
       Editor.element.focus();
-      if (!wasFocused) Editor.restoreSelection();
+      Editor.restoreSelection();
     },
+    // Explicitly snapshot the caret. Swift calls this on the *outgoing* editor
+    // at tab-switch time so the snapshot is taken while the selection is still
+    // valid, independent of whether the DOM blur event fires on the transfer.
+    snapshotSelection: () => Editor.snapshotSelection(),
     scrollToHeading: (text, level) => {
       const headings = Editor.element.querySelectorAll('h' + level);
       for (const h of headings) {

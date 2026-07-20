@@ -320,6 +320,15 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         webView.evaluateJavaScript("window.InkwellEditor.focus();")
     }
 
+    /// Ask this editor to snapshot its current caret/selection. Called by
+    /// ContentView on the *outgoing* tab at switch time so the snapshot is taken
+    /// while the selection is still valid (does not depend on the DOM blur event
+    /// firing on first-responder resign). Selection values stay entirely in JS.
+    func snapshotSelection() {
+        guard let webView = webView else { return }
+        webView.evaluateJavaScript("window.InkwellEditor.snapshotSelection();", completionHandler: nil)
+    }
+
     /// Move native keyboard focus (first responder) to this editor's webView.
     /// Used when switching between resident tabs so typing routes to the newly
     /// visible editor; the previously focused editor resigns automatically

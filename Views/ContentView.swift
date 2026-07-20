@@ -65,12 +65,19 @@ struct ContentView: View {
                 }
             }
         }
-        .onChange(of: appState.activeTabId) { _, newId in
+        .onChange(of: appState.activeTabId) { oldId, newId in
             // Resident editors: switching only flips visibility, no rebuild.
+            // Snapshot the outgoing editor's caret now, while it still holds a
+            // valid selection (before we move first responder away from it), so
+            // it can be restored when the user returns to that tab.
+            if let old = oldId {
+                coordinators[old]?.snapshotSelection()
+            }
             // Move keyboard focus to the newly active editor so typing routes
-            // there. Small delay lets a just-opened tab's webView attach to the
-            // window before makeFirstResponder. Previous editor resigns
-            // automatically, so hidden editors keep no first responder.
+            // there (focus() also restores that editor's snapshotted caret).
+            // Small delay lets a just-opened tab's webView attach to the window
+            // before makeFirstResponder. Previous editor resigns automatically,
+            // so hidden editors keep no first responder.
             guard let id = newId else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 coordinators[id]?.makeEditorFirstResponder()
