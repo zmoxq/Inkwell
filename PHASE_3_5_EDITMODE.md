@@ -337,4 +337,32 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 ---
 
-*Document version: 1.6 — display-math 编辑态含 $$ 定界符契约变更(v1.5: blur 语义收窄、Step 7 回归、serializer live-fence 修复、carousel ensureEdgeGaps 覆盖)*
+### 事故记录:WKWebView 泄漏 + 每-tab 常驻编辑器(Option A)
+
+**Commits**: `874cf7d`(WeakScriptMessageHandler + dismantle)、`e48b82a`(闭包链)、`1734153`(Option A 常驻编辑器)、`51612b6`+`bac57af`(光标恢复)、`447143d`(插桩降级 DEBUG)
+
+**现象**:打开 3 个文件后活动监视器出现 5 个 "Inkwell Web Content" 进程,关闭文件进程不减少。极端情况累积到几百个僵尸进程、内存吃满(一次实测涨到 730 GB 虚拟内存量级)。
+
+#### 根因三链条(乘积关系,缺一不致灾)
+
+1. **主犯 — 闭包菊花链,Coordinator/WebView 永不释放**。`ContentView` 传给 `MarkdownEditorView` 的存储回调(`onContentChange`/`onSaveRequest`/`onEditorReady`)未写 capture list,闭包按值捕获了整个 `ContentView` struct,连带其 `@State` 的 `editorCoordinator` box(引用类型)。于是 `Coordinator → 存储闭包 → ContentView self → State box → Coordinator`,自成环,ARC 永不回收。另有一条独立路径:`WKUserContentController` 强持有作为 message handler 注册的 `Coordinator`(`add(self, ...)`),形成 `Coordinator → WebView → configuration.userContentController → Coordinator`。
+2. **放大器 — 每次 tab 切换重建 WebView**。`editorArea` 用 `.id(doc.id)` 给编辑器子树做 identity,切 tab 即销毁重建 `MarkdownEditorView`,每次 `makeNSView` 造一个新 WebView + Coordinator。叠加链条 1,切得越多、泄漏越多(实例数 > 文件数)。
+3. **引擎 — 僵尸 WebView 里 JS 继续跑**。未释放的 WebView 的 Web Content 进程不退出,其中的 mermaid/KaTeX/定时逻辑持续占用 CPU/内存,把"泄漏"放大成"资源事故"。
+
+#### 三条防御措施(现已落地,后续所有 WebView 代码沿用)
+
+1. **`WeakScriptMessageHandler`**(`874cf7d`):`WKScriptMessageHandler` 代理,内部 `weak var delegate`,转发 `userContentController(_:didReceive:)`。所有 `userContentController.add(...)` 经它注册,打破 `userContentController → Coordinator` 强持有。
+2. **`dismantleNSView`/`dismantleUIView` 主动拆除**(`874cf7d` + `e48b82a`):视图销毁时 `stopLoading()` → `removeAllScriptMessageHandlers()` → `navigationDelegate = nil` → `loadHTMLString("", ...)`,并把 Coordinator 上存储的闭包属性全部置 nil(兜底断链)。
+3. **闭包捕获纪律**(`e48b82a`、`1734153`):**存储在长生命周期对象(Coordinator、Binding)上的回调闭包,只捕获值类型 id 或 app 级权威单例(`appState`),绝不捕获 `self`(SwiftUI view struct)或任何引用类型/Coordinator。** 现在按 tab id 从 `appState.openTabs` 反查文档,而不是捕获文档/coordinator。此纪律写进代码注释,是本 Phase 最重要的一条防回归约束。
+
+#### 诊断经验(下次十秒定性)
+
+**"Web Content 进程数 ≈ 活着的 WKWebView 实例数"。** 怀疑 WebView 泄漏时,先开活动监视器搜 "Web Content"(或 app 名),按固定序列开关文件,看进程数在关闭后几秒内是否回落——不落即泄漏,连 Xcode 都不用开就能定性。要精确定位持有链再上 Debug Memory Graph:过滤 `WKWebView` / `EditorCoordinator` 看活跃实例数,展开 retain path 看根那一环是我们的类、SwiftUI 节点、还是 WebKit 内部对象。DEBUG 下保留的 🏗️ make / 🗑️ deinit 打印(`447143d` 后仅 Debug)提供第二路证据:**make 次数 > deinit 次数即有 Coordinator 未释放**。
+
+#### 附带产物:Option A 常驻编辑器 + 光标自治
+
+修完泄漏后,把 identity 从 `.id(doc.id)` churn 改为**每 tab 常驻一个编辑器 WebView**(`ZStack` + `ForEach(openTabs)`,`opacity`/`allowsHitTesting`/`zIndex` 控制可见与交互;`editorCoordinator` 单槽位改为 `[UUID: EditorCoordinator]` 字典)。切 tab 不再重建,DOM/滚动/编辑态天然保留。副作用:光标恢复由 **JS 侧自治**——`blur`(及 Swift 在切换时点显式触发)快照 selection 为活 DOM 节点引用,`focus()` 恢复,冷启动/锚点脱离降级为不移动、绝不重置到 1:1。此路径依赖既有的 blur 语义收窄(见上一条「§4 blur 语义收窄」:`document.hasFocus()` 守卫使 tab 切换的 webView 级失焦不触发 leave-edit 渲染)。方案 B(单 WebView 复用)与 tab LRU 见 `INKWELL_ROADMAP.md` Backlog。
+
+---
+
+*Document version: 1.7 — 事故记录:WKWebView 泄漏根因三链条 + 三条防御 + Option A 常驻编辑器(v1.6: display-math 编辑态含 $$ 定界符契约变更;v1.5: blur 语义收窄、Step 7 回归、serializer live-fence 修复、carousel ensureEdgeGaps 覆盖)*
