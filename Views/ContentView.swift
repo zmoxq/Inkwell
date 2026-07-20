@@ -123,11 +123,17 @@ struct ContentView: View {
                 MarkdownEditorView(
                     markdownContent: $editingContent,
                     documentURL: doc.url,
-                    onContentChange: { newContent in
+                    // Capture only `appState` (the authoritative, app-lifetime
+                    // store), never `self`. Without the capture list these
+                    // closures capture the ContentView struct, which carries the
+                    // `_editorCoordinator` @State box — forming a
+                    // Coordinator → closure → box → Coordinator retain chain that
+                    // kept every EditorCoordinator/WKWebView alive.
+                    onContentChange: { [appState] newContent in
                         appState.currentDocument?.content = newContent
                         appState.currentDocument?.isDirty = true
                     },
-                    onSaveRequest: {
+                    onSaveRequest: { [appState] in
                         appState.saveCurrentDocument()
                     },
                     onCoordinatorReady: { coordinator in

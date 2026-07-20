@@ -24,7 +24,10 @@ struct MarkdownEditorView: View {
             documentURL: documentURL,
             onContentChange: onContentChange,
             onSaveRequest: onSaveRequest,
-            onEditorReady: {
+            // `[appState]` only — capturing `self` here would pull in the
+            // onContentChange/onSaveRequest closures (which originate in
+            // ContentView) and, transitively, the coordinator retain chain.
+            onEditorReady: { [appState] in
                 appState.isEditorReady = true
             },
             onCoordinatorReady: onCoordinatorReady
@@ -79,6 +82,12 @@ struct EditorWebViewRepresentable: NSViewRepresentable {
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
         webView.navigationDelegate = nil
         webView.loadHTMLString("", baseURL: nil)
+        // Belt-and-suspenders: drop stored callback closures so that even if a
+        // future closure accidentally captures a Coordinator, the chain is
+        // severed at teardown.
+        coordinator.onContentChange = nil
+        coordinator.onSaveRequest = nil
+        coordinator.onEditorReady = nil
     }
 }
 #else
@@ -126,6 +135,12 @@ struct EditorWebViewRepresentable: UIViewRepresentable {
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
         webView.navigationDelegate = nil
         webView.loadHTMLString("", baseURL: nil)
+        // Belt-and-suspenders: drop stored callback closures so that even if a
+        // future closure accidentally captures a Coordinator, the chain is
+        // severed at teardown.
+        coordinator.onContentChange = nil
+        coordinator.onSaveRequest = nil
+        coordinator.onEditorReady = nil
     }
 }
 #endif
