@@ -3,13 +3,40 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @State private var editingContent: String = ""
     @State private var selectedFile: FileItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    
+
     @StateObject private var formatState = EditorFormatState()
     @StateObject private var findReplaceState = FindReplaceState()
-    @State private var editorCoordinator: EditorCoordinator?
+
+    /// One resident EditorCoordinator per open tab, keyed by MarkdownDocument.id.
+    /// Replaces the former single `editorCoordinator` slot (Option A: per-tab
+    /// resident editors). Toolbar / find commands target the *active* tab's
+    /// coordinator while inactive editors stay alive and hidden.
+    @State private var coordinators: [UUID: EditorCoordinator] = [:]
+
+    /// Coordinator for the currently active tab, or nil if no tab is open.
+    private var activeCoordinator: EditorCoordinator? {
+        guard let id = appState.activeTabId else { return nil }
+        return coordinators[id]
+    }
+
+    /// A per-tab content binding scoped by document id. Captures only `appState`
+    /// (app-lifetime) and the id (a value type) — never `self` or a Coordinator —
+    /// because this binding is stored on the EditorCoordinator and any reference
+    /// capture here would rebuild the retain chain we just eliminated.
+    private func contentBinding(tabId: UUID) -> Binding<String> {
+        Binding(
+            get: { [appState] in
+                appState.openTabs.first(where: { $0.id == tabId })?.content ?? ""
+            },
+            set: { [appState] newValue in
+                guard let doc = appState.openTabs.first(where: { $0.id == tabId }),
+                      doc.content != newValue else { return }
+                doc.content = newValue
+            }
+        )
+    }
     
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -32,135 +59,149 @@ struct ContentView: View {
         }
         .onChange(of: appState.scrollToOutline) { _, item in
             if let item = item {
-                editorCoordinator?.scrollToHeading(title: item.title, level: item.level)
+                activeCoordinator?.scrollToHeading(title: item.title, level: item.level)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     appState.scrollToOutline = nil
                 }
             }
         }
-        .onChange(of: appState.activeTabId) { _, _ in
-            if let doc = appState.currentDocument {
-                editingContent = doc.content
-            } else {
-                // Last tab closed → editorArea falls back to emptyStateView and
-                // no new coordinator-ready fires. Release the retained
-                // coordinator (and its WKWebView) instead of leaving it pinned
-                // in @State until the next document opens.
-                editorCoordinator = nil
+        .onChange(of: appState.activeTabId) { _, newId in
+            // Resident editors: switching only flips visibility, no rebuild.
+            // Move keyboard focus to the newly active editor so typing routes
+            // there. Small delay lets a just-opened tab's webView attach to the
+            // window before makeFirstResponder. Previous editor resigns
+            // automatically, so hidden editors keep no first responder.
+            guard let id = newId else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                coordinators[id]?.makeEditorFirstResponder()
             }
         }
-        .onAppear {
-            if let doc = appState.currentDocument {
-                editingContent = doc.content
-            }
+        .onChange(of: appState.openTabs.map(\.id)) { _, ids in
+            // A tab was closed → drop its coordinator so the EditorCoordinator /
+            // WKWebView is released (ForEach already dismantled the view). Also
+            // covers the last-tab boundary (dict becomes empty on close-all).
+            coordinators = coordinators.filter { ids.contains($0.key) }
         }
     }
     
     // MARK: - Open File
     
     private func openFileAndLoadContent(_ url: URL) {
+        // Each resident editor binds to its own document via contentBinding, so
+        // there is no shared editing buffer to seed here.
         appState.openFile(url)
-        editingContent = appState.currentDocument?.content ?? ""
     }
     
     // MARK: - Editor Area
     
     @ViewBuilder
     private var editorArea: some View {
-        if let doc = appState.currentDocument {
+        if let activeDoc = appState.currentDocument {
             VStack(spacing: 0) {
                 // Tab bar (only shows when multiple tabs open)
                 TabBarView()
                     .environmentObject(appState)
-                
-                // Format toolbar
+
+                // Format toolbar — chrome shared across tabs; always drives the
+                // active tab's editor via activeCoordinator.
                 EditorToolbarView(
                     formatState: formatState,
                     zoomLevel: appState.zoomLevel,
                     onFormat: { command in
-                        editorCoordinator?.execFormat(command)
+                        activeCoordinator?.execFormat(command)
                     },
                     onFindReplace: {
                         if findReplaceState.isVisible {
-                            editorCoordinator?.closeFindReplace()
+                            activeCoordinator?.closeFindReplace()
                             findReplaceState.isVisible = false
                         } else {
                             findReplaceState.isVisible = true
                         }
                     },
                     onToggleTOC: {
-                        editorCoordinator?.toggleTOC()
+                        activeCoordinator?.toggleTOC()
                     },
                     onZoomTo: { level in setZoom(level) },
-                    onExportHTML: { exportHTML(doc: doc) },
-                    onExportPDF: { exportPDF(doc: doc) }
+                    onExportHTML: { exportHTML(doc: activeDoc) },
+                    onExportPDF: { exportPDF(doc: activeDoc) }
                 )
-                
+
                 // Find & Replace bar
                 if findReplaceState.isVisible {
                     FindReplaceBar(
                         state: findReplaceState,
                         onFind: { query, caseSensitive in
-                            editorCoordinator?.findInDocument(query, caseSensitive: caseSensitive)
+                            activeCoordinator?.findInDocument(query, caseSensitive: caseSensitive)
                         },
                         onFindNext: {
-                            editorCoordinator?.findNext()
+                            activeCoordinator?.findNext()
                         },
                         onFindPrevious: {
-                            editorCoordinator?.findPrevious()
+                            activeCoordinator?.findPrevious()
                         },
                         onReplace: { replacement in
-                            editorCoordinator?.replaceCurrent(replacement)
+                            activeCoordinator?.replaceCurrent(replacement)
                         },
                         onReplaceAll: { replacement in
-                            editorCoordinator?.replaceAll(replacement)
+                            activeCoordinator?.replaceAll(replacement)
                         },
                         onClose: {
-                            editorCoordinator?.closeFindReplace()
+                            activeCoordinator?.closeFindReplace()
                         }
                     )
                 }
-                
-                // Tag chip row (Phase 4 PR 4) — pinned above the editor,
-                // content scrolls beneath it
-                TagBarView(document: doc)
 
-                // Editor
-                MarkdownEditorView(
-                    markdownContent: $editingContent,
-                    documentURL: doc.url,
-                    // Capture only `appState` (the authoritative, app-lifetime
-                    // store), never `self`. Without the capture list these
-                    // closures capture the ContentView struct, which carries the
-                    // `_editorCoordinator` @State box — forming a
-                    // Coordinator → closure → box → Coordinator retain chain that
-                    // kept every EditorCoordinator/WKWebView alive.
-                    onContentChange: { [appState] newContent in
-                        appState.currentDocument?.content = newContent
-                        appState.currentDocument?.isDirty = true
-                    },
-                    onSaveRequest: { [appState] in
-                        appState.saveCurrentDocument()
-                    },
-                    onCoordinatorReady: { coordinator in
-                        coordinator.formatState = formatState
-                        coordinator.findReplaceState = findReplaceState
-                        editorCoordinator = coordinator
+                // Tag chip row (Phase 4 PR 4) — reflects the active document
+                TagBarView(document: activeDoc)
+
+                // Resident editors: one WKWebView per open tab, kept alive across
+                // switches. Identity comes from ForEach over stable tab ids — NOT
+                // `.id(doc.id)` — so switching never rebuilds. Only the active tab
+                // is visible + interactive; inactive editors are hidden (opacity 0)
+                // and non-interactive so no touches/keys leak through. Closing a
+                // tab removes it from openTabs → ForEach dismantles that editor →
+                // the release path (WeakScriptMessageHandler + dismantle) fires.
+                ZStack {
+                    ForEach(appState.openTabs) { tab in
+                        let isActive = tab.id == appState.activeTabId
+                        MarkdownEditorView(
+                            markdownContent: contentBinding(tabId: tab.id),
+                            documentURL: tab.url,
+                            // Stored closures: capture only `appState` (app-lifetime)
+                            // and `tab.id` (a value type). Never `self` or a
+                            // Coordinator — that daisy chain previously kept every
+                            // Coordinator/WKWebView alive.
+                            onContentChange: { [appState] newContent in
+                                guard let doc = appState.openTabs.first(where: { $0.id == tab.id }) else { return }
+                                doc.content = newContent
+                                doc.isDirty = true
+                            },
+                            onSaveRequest: { [appState] in
+                                appState.saveCurrentDocument()
+                            },
+                            onCoordinatorReady: { coordinator in
+                                // onCoordinatorReady is NOT stored on the Coordinator
+                                // (invoked once in makeNSView, held by the
+                                // representable), so it's released with the tab's
+                                // identity and does not form a persistent chain.
+                                coordinator.formatState = formatState
+                                coordinator.findReplaceState = findReplaceState
+                                coordinator.setZoom(appState.zoomLevel)
+                                coordinators[tab.id] = coordinator
+                            }
+                        )
+                        .environmentObject(appState)
+                        .opacity(isActive ? 1 : 0)
+                        .allowsHitTesting(isActive)
+                        .zIndex(isActive ? 1 : 0)
                     }
-                )
-                .environmentObject(appState)
-            }
-            .id(doc.id)
-            .navigationTitle(doc.name)
-            #if os(macOS)
-            .navigationSubtitle(doc.isDirty ? "Edited" : "")
-            #endif
-            .ignoresSafeArea(.keyboard)
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    editorCoordinator?.setZoom(appState.zoomLevel)
                 }
             }
+            .navigationTitle(activeDoc.name)
+            #if os(macOS)
+            .navigationSubtitle(activeDoc.isDirty ? "Edited" : "")
+            #endif
+            .ignoresSafeArea(.keyboard)
             #if os(macOS)
             .onReceive(NotificationCenter.default.publisher(for: .zoomIn)) { _ in zoomIn() }
             .onReceive(NotificationCenter.default.publisher(for: .zoomOut)) { _ in zoomOut() }
@@ -228,7 +269,6 @@ struct ContentView: View {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         
         if let url = appState.createNewFile(in: directory) {
-            editingContent = ""
             selectedFile = FileItem(url: url, isDirectory: false, modificationDate: Date())
         }
     }
@@ -237,7 +277,7 @@ struct ContentView: View {
     
     private func setZoom(_ level: Int) {
         appState.setZoom(level)
-        editorCoordinator?.setZoom(appState.zoomLevel)
+        activeCoordinator?.setZoom(appState.zoomLevel)
     }
     
     private func zoomIn() { setZoom(appState.zoomLevel + 10) }
@@ -253,7 +293,7 @@ struct ContentView: View {
         panel.nameFieldStringValue = doc.name + ".html"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            editorCoordinator?.exportHTML { html in
+            activeCoordinator?.exportHTML { html in
                 guard let html = html else { return }
                 try? html.write(to: url, atomically: true, encoding: .utf8)
             }
@@ -268,7 +308,7 @@ struct ContentView: View {
         panel.nameFieldStringValue = doc.name + ".pdf"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            editorCoordinator?.exportPDF { data in
+            activeCoordinator?.exportPDF { data in
                 guard let data = data else { return }
                 try? data.write(to: url)
             }

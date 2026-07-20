@@ -319,7 +319,21 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     func focus() {
         webView.evaluateJavaScript("window.InkwellEditor.focus();")
     }
-    
+
+    /// Move native keyboard focus (first responder) to this editor's webView.
+    /// Used when switching between resident tabs so typing routes to the newly
+    /// visible editor; the previously focused editor resigns automatically
+    /// (one first responder per window/scene), so hidden editors hold no focus.
+    func makeEditorFirstResponder() {
+        guard let webView = webView else { return }
+        #if os(macOS)
+        webView.window?.makeFirstResponder(webView)
+        #else
+        webView.becomeFirstResponder()
+        #endif
+        webView.evaluateJavaScript("window.InkwellEditor.focus();", completionHandler: nil)
+    }
+
     // MARK: - Find & Replace — Swift → JS
     
     func execFormat(_ format: String) {
