@@ -260,6 +260,15 @@
     background: var(--border, #d0d0d0);
     margin: 2px 3px;
   }
+  /* Destructive block-delete item (shared by table + carousel block menus).
+     Visually set apart from other items; relies on undo, no confirm dialog. */
+  .inkwell-table-toolbar button.inkwell-block-delete {
+    color: #c0392b;
+    font-weight: 600;
+  }
+  .inkwell-table-toolbar button.inkwell-block-delete:hover {
+    background: rgba(192, 57, 43, 0.12);
+  }
 
   /* Alignment classes */
   #editor td.align-center, #editor th.align-center { text-align: center; }
@@ -273,6 +282,8 @@
     }
     .inkwell-table-toolbar button { color: #ddd; }
     .inkwell-table-toolbar button:hover { background: #444; }
+    .inkwell-table-toolbar button.inkwell-block-delete { color: #ff6b5e; }
+    .inkwell-table-toolbar button.inkwell-block-delete:hover { background: rgba(255,107,94,0.15); }
   }
 
   /* ========== Image Carousel ========== */
@@ -2529,6 +2540,7 @@
       name: 'image-group',
       type: 'image-group',
       editStyle: 'none',
+      deletable: true,                  // offers a Delete item in its block menu (§3.5)
       capabilities: { rerenderOn: [] },
 
       match(block) {
@@ -3560,13 +3572,28 @@
   // Carousel Manager: image carousel interaction
   // ----------------------------------------------------------
   const CarouselManager = {
+    editor: null,
+    activeCarousel: null,
+    menu: null,
+
     init(editor) {
+      this.editor = editor;
       // Use event delegation on the editor element
       editor.element.addEventListener('click', (e) => this.onClick(e));
       editor.element.addEventListener('keydown', (e) => this.onKeyDown(e));
+      // Dismiss the block menu on click outside the carousel / menu
+      document.addEventListener('click', (e) => {
+        if (this.menu && !this.menu.contains(e.target) && !e.target.closest('.inkwell-carousel')) {
+          this.hideMenu();
+        }
+      });
     },
 
     onClick(e) {
+      // Any click within a carousel shows/refreshes its block menu
+      const clickedCarousel = e.target.closest('.inkwell-carousel');
+      if (clickedCarousel) this.showMenu(clickedCarousel);
+
       // Arrow buttons
       const arrow = e.target.closest('.inkwell-carousel-arrow');
       if (arrow) {
@@ -3610,6 +3637,46 @@
       const current = parseInt(carousel.getAttribute('data-current'));
       const next = Math.max(0, Math.min(count - 1, current + delta));
       this.goTo(carousel, next);
+    },
+
+    // --- Block menu (floating toolbar, mirrors TableManager; §3.5) ---
+
+    // The top-level block for a carousel is its .inkwell-block-renderer root.
+    // Shows a floating menu with a Delete item when the renderer declares
+    // deletable:true (image-group). No-op for non-deletable renderers.
+    showMenu(carousel) {
+      const root = carousel.closest('.inkwell-block-renderer');
+      if (!root) return;
+      const spec = (typeof ExtensionRegistry !== 'undefined')
+        ? ExtensionRegistry._findRendererByName(root.getAttribute('data-renderer'))
+        : null;
+      if (!spec || !spec.deletable) return;
+      if (this.activeCarousel === root && this.menu) return;   // already shown
+
+      this.hideMenu();
+      this.activeCarousel = root;
+
+      const tb = document.createElement('div');
+      tb.className = 'inkwell-table-toolbar';   // reuse floating-toolbar styling
+      tb.contentEditable = 'false';
+
+      const delItem = BlockDeletion.createMenuItem(root, '🗑 Carousel');
+      delItem.title = 'Delete carousel';
+      delItem.addEventListener('mousedown', () => this.hideMenu());
+      tb.appendChild(delItem);
+
+      const container = document.querySelector('.editor-container');
+      const rootRect = root.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      tb.style.left = Math.max(0, rootRect.left - containerRect.left) + 'px';
+      tb.style.top = (rootRect.top - containerRect.top - 38) + 'px';
+      container.appendChild(tb);
+      this.menu = tb;
+    },
+
+    hideMenu() {
+      if (this.menu) { this.menu.remove(); this.menu = null; }
+      this.activeCarousel = null;
     },
 
     goTo(carousel, idx) {
@@ -3828,6 +3895,87 @@
     _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); },
     _shortUrl(s) { try { return decodeURIComponent(s).split('/').pop() || s; } catch(e) { return s; } }
   };
+  // ----------------------------------------------------------
+  // Block Deletion: unified "delete whole block" for structured blocks.
+  // Behavior lives here once; block types only declare whether they offer a
+  // delete item (carousel via spec deletable:true; table wired directly by
+  // TableManager). Future renderer blocks reuse deleteBlock / createMenuItem.
+  // See PHASE_3_ARCHITECTURE.md §3.5.
+  // ----------------------------------------------------------
+  const BlockDeletion = {
+    editor: null,
+    init(editor) { this.editor = editor; },
+
+    // True if a caret can rest inside `node` (not an atomic / CE=false block).
+    _canCaret(node) {
+      return !!node && node.tagName !== 'PRE' &&
+        !(node.classList && node.classList.contains('inkwell-block-renderer')) &&
+        !(node.getAttribute && node.getAttribute('contenteditable') === 'false');
+    },
+
+    // Atomic, undoable removal of an entire top-level block (direct child of
+    // #editor). Routed through execCommand so the whole subtree is a SINGLE
+    // native undo unit — Cmd+Z restores it in one step (§3.5, D1). A raw
+    // remove()/replaceChild would not enter the browser undo stack at all.
+    deleteBlock(blockEl) {
+      const editor = this.editor.element;
+      if (!blockEl || blockEl.parentNode !== editor) return;
+
+      // Landing references captured BEFORE removal.
+      const prev = blockEl.previousElementSibling;
+      const next = blockEl.nextElementSibling;
+
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNode(blockEl);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('delete');
+
+      // Keep the document editable. When the deleted block was the only
+      // content, ensureEdgeGaps inserts a fresh <p><br></p> and focuses it —
+      // it owns the caret in that case.
+      this.editor.ensureEdgeGaps();
+      if (this._canCaret(prev) || this._canCaret(next)) {
+        this._placeCaret(prev, next);
+      }
+
+      this.editor.onContentChange();
+    },
+
+    // Caret to end of previous block, else start of next block.
+    _placeCaret(prev, next) {
+      let target, toEnd;
+      if (this._canCaret(prev)) { target = prev; toEnd = true; }
+      else { target = next; toEnd = false; }
+      if (!target) return;
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      range.collapse(!toEnd);   // collapse(false)=end, collapse(true)=start
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    },
+
+    // A destructive "Delete" menu item wired to remove `blockEl`. Tagged
+    // data-inkwell-ui + contenteditable=false so it never reaches the
+    // serializer/clipboard (§3.4). Callers append it to their block menu.
+    createMenuItem(blockEl, label) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'inkwell-block-delete';
+      btn.textContent = label || 'Delete';
+      btn.setAttribute('data-inkwell-ui', '');
+      btn.setAttribute('contenteditable', 'false');
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.deleteBlock(blockEl);
+      });
+      return btn;
+    }
+  };
+
   const TableManager = {
     editor: null,
     activeTable: null,
@@ -4002,6 +4150,16 @@
         });
         tb.appendChild(btn);
       });
+
+      // Destructive: delete the whole table (block-level deletion, §3.5).
+      // Set apart by a separator + red styling; relies on undo, no confirm.
+      const sep = document.createElement('div');
+      sep.className = 'separator';
+      tb.appendChild(sep);
+      const delItem = BlockDeletion.createMenuItem(table, '🗑 Table');
+      delItem.title = 'Delete table';
+      delItem.addEventListener('mousedown', () => this.hideToolbar());
+      tb.appendChild(delItem);
 
       // Append to editor-container (outside contentEditable) for proper rendering
       const container = document.querySelector('.editor-container');
@@ -5486,6 +5644,9 @@
 
       // Initialize live converter
       LiveConverter.init(this);
+
+      // Initialize block deletion (shared by table + carousel block menus)
+      BlockDeletion.init(this);
 
       // Initialize table manager
       TableManager.init(this);

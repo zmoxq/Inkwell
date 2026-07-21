@@ -189,6 +189,74 @@ LiveConverter 因其扫描机制不同,不做"克隆-剥除"而做"扫描-跳过
 
 > 本契约兑现了 `PHASE_3_5_EDITMODE.md` 附录设计债 **D2**("第二种注入 contentEditable DOM 的 UI 装饰物出现时,应升级为统一 `data-inkwell-ui` 属性过滤")。逐 class 枚举的既有跳过点(keydown/beforeinput 删除守卫、slash 菜单块文本、导出路径)不在本次"内容出口"范围内,保留原样;drag-handle/fold-toggle 现同时带 class 与属性,两套过滤并存无冲突。
 
+### 3.5 块级删除机制(`BlockDeletion`)
+
+结构化块(表格、carousel,未来 mermaid/stockchart 等)需要一个统一的"删除整块"操作。目标是**一处实现删除行为,块类型只声明是否提供入口**,而不是每种块各写一个删除按钮各管一套 undo。
+
+**核心行为(core 统一实现)**:`BlockDeletion.deleteBlock(blockEl)`,`blockEl` 必须是 `#editor` 的**顶层子节点**(表格 = `<table>`;carousel = `.inkwell-block-renderer` root)。三步:
+
+1. **原子删除**(见下"undo 契约")
+2. **光标落点**:落到**前一个块的末尾**;无前块则后一个块开头;两者都无(唯一块)则由 `ensureEdgeGaps()` 新建 `<p><br></p>` 并落入。理由:删块类比"退格合并",光标停在已存在的可编辑正文里最不突兀;前块末尾一定是合法 caret 位,而相邻块可能又是 CE=false 渲染块(无 caret 位),故优先前块。删除后**显式设 selection**——设 selection 不进 undo 栈,不破坏原子性。
+3. **唯一块保护**:删除后调既有 `ensureEdgeGaps()`,空文档自动补 `<p><br></p>` 并聚焦,文档始终可输入。
+
+#### undo 契约:为什么必须走 `execCommand`(本节是后续 undo 边界设计的输入)
+
+`PHASE_3_5_EDITMODE.md` OQ1/D1 已裁决:**不引入自管 undo,完全依赖浏览器原生 contentEditable 撤销栈**;裸 DOM 改动(`removeChild`/`replaceChild`)**不进原生撤销栈**,故 enter/leave-edit 是"不可撤销边界"。这直接约束了删除的实现:
+
+- ❌ `blockEl.remove()` / `replaceChild` —— Cmd+Z **完全无效**,违反"单一原子 undo 步"要求。
+- ✅ **把删除动作走原生编辑管线**——整块 `selectNode` 后一次 `execCommand('delete')`:
+
+```javascript
+const range = document.createRange();
+range.selectNode(blockEl);            // 整块作为一个单元选中
+sel.removeAllRanges(); sel.addRange(range);
+document.execCommand('delete');       // 一次 execCommand = 一个 undo 单元
+```
+
+**原子性从何而来**:`execCommand` 是编辑器既有的 undo 集成路径(格式命令、cut handler L5801 均走它)。每次 `execCommand` 调用在原生撤销栈里登记**一个** undo 单元;WebKit 对被删片段做整体 DOM 快照,Cmd+Z 一次恢复整棵子树(表格全部单元格内容 / carousel 全部图片幻灯 + 控件),不拆成多步。光标落点是删除**之后**的独立 selection 操作,不产生第二个 undo 单元。
+
+**与既有删除守卫的关系**:`beforeinput` 守卫(L5529)只在**部分切入**受保护块(`startP`/`endP` 落在 `<pre>`/renderer 内且有残留)时 `preventDefault`。整块 `selectNode` 时删除边界落在 `#editor` 层,`startP`/`endP` 均为 `null`,守卫不拦截,块被干净整体删除。`execCommand` 不触发 keydown,keydown 守卫天然无关。
+
+> **正式先例**:自本节起,"要原子可撤销 → 必须过 `execCommand`;裸 DOM 改动一律是不可撤销边界"成为 Inkwell 的 undo 边界规则。D1 的边界清单据此扩展(见 `PHASE_3_5_EDITMODE.md`)。
+
+#### 声明机制(块类型如何提供删除入口)
+
+| 块类型 | 出生方式 | 声明方式 |
+|--------|---------|---------|
+| carousel(image-group) | 注册的 BlockRenderer | spec 增字段 `deletable: true` |
+| table | core 原生 parser 产物(非 extension) | 无 spec,由 `TableManager` 直接接线 |
+
+**不对称如实记录**:`deletable` 只对注册的 BlockRenderer 有意义;table 是 core DOM,没有 spec 承载声明,故由其菜单持有者(TableManager)直接调 `BlockDeletion`。共享的是 **core 行为**(`deleteBlock` + 删除项工厂 `createMenuItem`),而非一套配置驱动的注册表——2 个用例不足以支撑通用注册表(YAGNI)。未来第 3 种块接入时若仍是 BlockRenderer,`deletable: true` 直接复用;若是又一种 core 原生块,同 table 直接接线。
+
+#### UI 契约
+
+- **入口形态**:删除项是**破坏性菜单项**,加入块的浮动块菜单;与其他项视觉区分(红色调),**不做二次确认弹窗**,依赖 undo 兜底。
+- **表格**:在既有 `.inkwell-table-toolbar` 尾部(分隔符后)追加"Delete Table"项。
+- **carousel**:carousel 此前**没有块菜单**(只有箭头/圆点/计数器导航件)。新建一条**浮动块工具条**(仿 `.inkwell-table-toolbar` pattern),选中/hover carousel 时浮出,含 Delete 项。此工具条为**通用 renderer 块菜单**雏形:凡 `data-renderer` 对应 spec `deletable: true` 的 root 即挂载。
+- **`data-inkwell-ui` 合规**:删除项及浮动菜单容器经 `createUIElement` / 打 `data-inkwell-ui` + `contenteditable="false"`,不进序列化/剪贴板(§3.4)。carousel 图片附件文件本身不受影响——删除只移除 DOM(即 .md 里的 `![]()` 引用),磁盘图片文件不动。
+
+#### 待交互验收的实现风险(WKWebView 实机,由用户在运行 app 中确认)
+
+| 风险 | 说明 | 兜底 |
+|------|------|------|
+| 相邻块合并 | `selectNode + execCommand('delete')` 删除夹在两段落间的块后,WebKit 是否把前后两段落误并成一段 | 若复现:改用 `execCommand('insertHTML', …)` 1:1 替换,或调整边界 |
+| 复杂子树 undo 恢复 | 表格多单元格 / carousel 多图 的 Cmd+Z 是否逐属性完整还原 | execCommand 快照理论覆盖;实机确认 |
+| 空文档 caret | 删唯一块后 WebKit 可能留 `<br>`/空 text,`ensureEdgeGaps` 的空判定需覆盖 | 实机确认后按需收紧空判定 |
+
+#### 明确不做(本次边界)
+
+- ❌ mermaid / stock chart / 代码块的删除接入(机制稳定后按需接;它们只需 `deletable: true` 或直接接线)
+- ❌ 删除的键盘快捷键
+- ❌ 二次确认弹窗
+- ❌ Phase 3.5 编辑状态机改动、serializer 源码权威逻辑改动
+
+#### 实施顺序(一个 commit)
+
+1. Core `BlockDeletion`:`deleteBlock` + `createMenuItem` + 破坏性菜单项 CSS
+2. TableManager:工具条尾部追加 Delete Table 项
+3. Carousel 浮动块菜单 + image-group spec `deletable: true`
+4. 回归(表格增删行列/排序、carousel 导航、find/replace、主题切换、round-trip)+ build + 交付交互验收清单
+
 ### 关于源码存储:为什么用 base64 attribute
 
 三种方案对比后的选择:
