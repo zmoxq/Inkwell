@@ -39,8 +39,10 @@
     position: relative;
   }
   #editor pre code.hljs {
-    padding: 1em;
-    border-radius: 6px;
+    /* Padding is owned by the <pre> (see .ProseMirror pre in theme baseCSS).
+       hljs code must not add a second inset, or a 1–2 line block stacks
+       pre-padding + 1em code-padding and looks bloated. */
+    padding: 0;
   }
   /* Language label badge */
   #editor pre::after {

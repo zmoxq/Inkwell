@@ -603,8 +603,8 @@ struct BuiltInThemes {
         background: var(--bg-code);
         border: 1px solid var(--border);
         border-radius: 8px;
-        padding: 16px 20px;
-        margin: 1em 0;
+        padding: 12px 16px;
+        margin: 0.8em 0;
         overflow-x: auto;
         line-height: 1.5;
     }
