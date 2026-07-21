@@ -650,18 +650,27 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 **测试网已补齐**:`tests/roundtrip/` + `InkwellTests/RoundTripTests` 是常驻交付物,经 `xcodebuild test` 运行,覆盖上述纯 round-trip 路径。交互编辑路径的自动化仍是缺口。
 
-### LiveConverter 实时切换未接入
+### LiveConverter → BlockRenderer 实时接入(Phase 3.5 起已打通;2026-07-21 复核更新)
 
-设计区分了两条渲染路径,实际只接通了一条:
+> **本节旧版**记录"LiveConverter 路径未接入 BlockRenderer,现场敲的块必须重载文件才渲染"。该状态已被 **Phase 3.5**(`PHASE_3_5_EDITMODE.md`,LiveConverter × EditMode 状态机,status 已完成)整体消除。此处更新为当前事实,旧描述作废。
+
+两条渲染路径现均接通,统一在 **cursor-leave** 触发渲染(与 Phase 3.5 决策 1 的统一触发点一致):
 
 | 路径 | 触发场景 | 是否走 BlockRenderer |
 |------|---------|------|
 | Parser 路径 | loadMarkdown / 冷启动加载 | ✅ 已接入 |
-| LiveConverter 路径 | 用户实时输入 ` ```mermaid ` | ❌ 仍生成原始 `<pre><code>` |
+| LiveConverter 路径 | 现场输入 → 光标离开块 | ✅ 经 EditMode leave-edit → BlockRenderer |
 
-**当前用户体验**:在编辑器里现场敲 mermaid 块,必须重新加载文件才能看到渲染产物。代码里加了 TODO 注释。
+**接入形态是通用的,不是某块特化**——凡注册了 BlockRenderer 的块类型,live-input 都在 cursor-leave 渲染:
 
-**为什么不解决**:实时切换涉及 typora-style edit-mode 的设计议题——光标进入 mermaid 块时显示什么(源码?渲染图?)、切换时机、UX 取舍,都不简单。是独立话题,留待未来专项处理。
+- **Fenced-code 类 renderer(mermaid、stock-chart)**:`LiveConverter.onEnter` 对 ` ```lang ` 且该 lang 有注册 renderer 时,产出带 `inkwell-live-fence` + `data-fence-language` 的编辑态 `<pre>` 并置 `EditMode._editingFence`;光标离开时 `_doLeaveEdit` 按 `{type:'fenced-code', language, content}` 派发到对应 renderer。
+- **Display-math(`$$`)**:`$$` 不是围栏,需与 ` ``` ` 并列的定界符规则——`onEnter` 对独占行 `$$` 产出 `data-block-type="display-math"` 的编辑态 fence(文本含双 `$$`),`_doLeaveEdit` 按 `{type:'display-math', content, raw}` 派发到 `katex-display` renderer。此规则由 `36aa394`(2026-07-16)补齐。
+
+**math block 三入口一致(2026-07-21)**:display math 的三条进入路径——冷加载(parser)、现场输入(LiveConverter)、`/` 菜单插入——现产出**同构**的编辑态 fence,离开时走同一个 `katex-display` renderer。此前 `/` 菜单插入的是错误的 `language-math` 普通代码块,已修正为与另两路一致的 `data-block-type="display-math"` 编辑态 fence。
+
+**round-trip 等价**:parser 的 `data-pending-source-b64 = base64(raw)`(`raw = $$\n…\n$$`,含双定界符);leave-edit 侧 `block.raw = codeEl.textContent`(编辑态文本本就含双定界符),renderer 取 `sourceMarkdown = block.raw`。故三路产出的 `data-source-b64` 逐字节相同,存盘 markdown 一致。
+
+**仍未接入**:inline `$...$`(InlineRegistry v1 明确不支持,留 PR5),不在本节范围。原"typora-style edit-mode 设计议题"已由 Phase 3.5 状态机解决(光标进入渲染块 → 就地切回源码编辑态;离开 → 重渲染)。
 
 ---
 
