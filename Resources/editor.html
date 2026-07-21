@@ -5254,15 +5254,31 @@
           break;
         }
         case 'math': {
+          // Display-math editing fence — the SAME structure LiveConverter
+          // produces for a live-typed `$$` (data-block-type=display-math,
+          // inkwell-live-fence, both $$ delimiters present). Previously this
+          // inserted a plain `language-math` code block, which is not a math
+          // block at all. Stays in edit mode with the caret on the empty
+          // middle line so the user types the formula directly; on cursor-
+          // leave the katex-display BlockRenderer renders it — the same path
+          // as the parser and live-input entries (three paths converge).
           const pre = document.createElement('pre');
-          pre.setAttribute('data-language', 'math');
+          pre.setAttribute('data-block-type', 'display-math');
           const code = document.createElement('code');
-          code.className = 'language-math';
-          code.textContent = '\n';
+          code.className = 'inkwell-live-fence';
+          code.textContent = '$$\n\n$$';
           pre.appendChild(code);
           if (block) block.parentNode.replaceChild(pre, block);
           else ed.element.appendChild(pre);
-          this._setCursor(code, 0);
+          EditMode._editingFence = pre;
+          ed.ensureEdgeGaps();
+          // Caret on the empty middle line (offset 3 = right after "$$\n").
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.setStart(code.firstChild, 3);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
           break;
         }
       }
