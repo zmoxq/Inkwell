@@ -949,6 +949,7 @@
             btn.className = 'renderer-edit-action';
             btn.type = 'button';
             btn.textContent = 'Edit Source';
+            btn.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
             root.appendChild(btn);
           }
           return root;
@@ -996,6 +997,7 @@
           out.innerHTML = '';
           const ph = document.createElement('div');
           ph.className = 'renderer-loading';
+          ph.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
           ph.textContent = message || 'Loading…';
           out.appendChild(ph);
         },
@@ -1006,6 +1008,7 @@
           out.innerHTML = '';
           const box = document.createElement('div');
           box.className = 'renderer-error';
+          box.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
           box.setAttribute('data-error-type', errorInfo?.type || 'unknown');
           box.textContent = errorInfo?.message || 'Render failed';
           out.appendChild(box);
@@ -2467,7 +2470,7 @@
       return images;
     }
 
-    function buildCarouselDOM(images) {
+    function buildCarouselDOM(images, ctx) {
       const carousel = document.createElement('div');
       carousel.className = 'inkwell-carousel';
       carousel.setAttribute('data-carousel', '');
@@ -2488,38 +2491,33 @@
       });
       carousel.appendChild(track);
 
-      const prevBtn = document.createElement('button');
-      prevBtn.className = 'inkwell-carousel-arrow prev';
-      prevBtn.setAttribute('aria-label', 'Previous');
-      const prevIcon = document.createElement('span');
-      prevIcon.className = 'inkwell-carousel-arrow-icon';
-      prevIcon.textContent = '‹';
-      prevBtn.appendChild(prevIcon);
+      // Navigation controls are attached UI (§3.4), created via
+      // ctx.createUIElement so they carry data-inkwell-ui + contenteditable.
+      // The icon spans / individual dots are stripped along with their tagged
+      // parent's subtree, so only the top-level controls need tagging.
+      const prevIcon = ctx.createElement('span', { className: 'inkwell-carousel-arrow-icon' }, '‹');
+      const prevBtn = ctx.createUIElement('button',
+        { className: 'inkwell-carousel-arrow prev', 'aria-label': 'Previous' }, prevIcon);
       carousel.appendChild(prevBtn);
 
-      const nextBtn = document.createElement('button');
-      nextBtn.className = 'inkwell-carousel-arrow next';
-      nextBtn.setAttribute('aria-label', 'Next');
-      const nextIcon = document.createElement('span');
-      nextIcon.className = 'inkwell-carousel-arrow-icon';
-      nextIcon.textContent = '›';
-      nextBtn.appendChild(nextIcon);
+      const nextIcon = ctx.createElement('span', { className: 'inkwell-carousel-arrow-icon' }, '›');
+      const nextBtn = ctx.createUIElement('button',
+        { className: 'inkwell-carousel-arrow next', 'aria-label': 'Next' }, nextIcon);
       carousel.appendChild(nextBtn);
 
-      const dots = document.createElement('div');
-      dots.className = 'inkwell-carousel-dots';
+      const dots = ctx.createUIElement('div', { className: 'inkwell-carousel-dots' });
       images.forEach((_, idx) => {
-        const dot = document.createElement('button');
-        dot.className = 'inkwell-carousel-dot' + (idx === 0 ? ' active' : '');
-        dot.setAttribute('data-dot', idx);
-        dot.setAttribute('aria-label', 'Slide ' + (idx + 1));
+        const dot = ctx.createElement('button', {
+          className: 'inkwell-carousel-dot' + (idx === 0 ? ' active' : ''),
+          'data-dot': idx,
+          'aria-label': 'Slide ' + (idx + 1)
+        });
         dots.appendChild(dot);
       });
       carousel.appendChild(dots);
 
-      const counter = document.createElement('div');
-      counter.className = 'inkwell-carousel-counter';
-      counter.textContent = '1 / ' + images.length;
+      const counter = ctx.createUIElement('div',
+        { className: 'inkwell-carousel-counter' }, '1 / ' + images.length);
       carousel.appendChild(counter);
 
       return carousel;
@@ -2547,7 +2545,7 @@
         });
 
         const out = root.querySelector('.renderer-output');
-        const carousel = buildCarouselDOM(images);
+        const carousel = buildCarouselDOM(images, ctx);
         out.appendChild(carousel);
 
         if (typeof CarouselManager !== 'undefined') {
@@ -4269,6 +4267,7 @@
         const handle = document.createElement('span');
         handle.className = 'inkwell-drag-handle';
         handle.setAttribute('contenteditable', 'false');
+        handle.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
         handle.textContent = '⠿';
         // For headings, insert after fold toggle (if present)
         const foldToggle = block.querySelector('.inkwell-fold-toggle');
@@ -4522,6 +4521,7 @@
           const btn = document.createElement('span');
           btn.className = 'inkwell-fold-toggle';
           btn.setAttribute('contenteditable', 'false');
+          btn.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
           h.insertBefore(btn, h.firstChild);
         }
       });
