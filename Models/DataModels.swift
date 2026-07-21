@@ -19,37 +19,26 @@ class MarkdownDocument: ObservableObject, Identifiable {
         url.lastPathComponent
     }
     
+    /// Per-note attachment folder (`<basename>/`). Delegates to the shared
+    /// InkwellAttachmentStore so the convention lives in one place.
     var attachmentsDirectory: URL {
-        url.deletingPathExtension()
+        InkwellAttachmentStore.attachmentsDirectory(for: url)
     }
-    
+
     init(url: URL, content: String) {
         self.url = url
         self.content = content
     }
-    
+
     func ensureAttachmentsDirectory() throws {
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: attachmentsDirectory.path) {
-            try fm.createDirectory(at: attachmentsDirectory, withIntermediateDirectories: true)
-        }
+        try InkwellAttachmentStore.ensureDirectory(for: url)
     }
-    
+
+    /// Save an asset into `<basename>/` with a collision-safe name and return
+    /// the markdown-relative path. See InkwellAttachmentStore for the naming
+    /// and collision rules (`<cleaned>-<shorthash>.<ext>`).
     func saveAttachment(data: Data, fileName: String) throws -> String {
-        try ensureAttachmentsDirectory()
-        let fm = FileManager.default
-        var finalName = fileName
-        var targetURL = attachmentsDirectory.appendingPathComponent(finalName)
-        var counter = 1
-        while fm.fileExists(atPath: targetURL.path) {
-            let ext = (fileName as NSString).pathExtension
-            let base = (fileName as NSString).deletingPathExtension
-            finalName = "\(base)_\(counter).\(ext)"
-            targetURL = attachmentsDirectory.appendingPathComponent(finalName)
-            counter += 1
-        }
-        try data.write(to: targetURL)
-        return "\(name)/\(finalName)"
+        try InkwellAttachmentStore.save(data: data, originalName: fileName, for: url)
     }
 }
 

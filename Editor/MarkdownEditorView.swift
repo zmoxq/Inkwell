@@ -764,30 +764,66 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         #endif
     }
 
+    /// Copy a picked image into the note's `<basename>/` attachment folder via
+    /// the shared InkwellAttachmentStore, and return the markdown-relative path
+    /// (`<basename>/<cleaned>-<hash>.<ext>`). Returns nil — without inserting —
+    /// when the note has no on-disk location yet (no basename) or the copy
+    /// fails, surfacing a native error instead of silently polluting the note
+    /// directory or failing quietly.
+    private func storePickedImage(at sourceURL: URL) -> String? {
+        guard let noteURL = documentURL else {
+            // Unsaved note: no basename to derive <basename>/. In the current
+            // architecture every open document already has a URL (new notes are
+            // created on disk as "Untitled N.md" before editing), so this is a
+            // defensive guard rather than a reachable path.
+            presentImageStoreError("Save this note to disk before adding images.")
+            return nil
+        }
+        do {
+            let data = try Data(contentsOf: sourceURL)
+            return try InkwellAttachmentStore.save(
+                data: data, originalName: sourceURL.lastPathComponent, for: noteURL)
+        } catch {
+            presentImageStoreError("Could not add the image: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func presentImageStoreError(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            #if os(macOS)
+            let alert = NSAlert()
+            alert.messageText = "Add Image"
+            alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            if let window = self.webView.window {
+                alert.beginSheetModal(for: window, completionHandler: nil)
+            } else {
+                alert.runModal()
+            }
+            #else
+            let alert = UIAlertController(
+                title: "Add Image", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let root = scene.windows.first?.rootViewController {
+                var top = root
+                while let presented = top.presentedViewController { top = presented }
+                top.present(alert, animated: true)
+            }
+            #endif
+        }
+    }
+
     #if os(macOS)
     private func sendImageURLToJS(url: URL, carouselMode: Bool) {
-        // Copy image to document directory so it's accessible from the webview sandbox
-        let fileName = url.lastPathComponent
-        let dest: URL
-        if let baseDir = documentBaseURL {
-            dest = baseDir.appendingPathComponent(fileName)
-            if !FileManager.default.fileExists(atPath: dest.path) {
-                try? FileManager.default.copyItem(at: url, to: dest)
-            }
-        } else {
-            dest = url
-        }
-        let relativePath = dest.lastPathComponent
-        let js: String
-        if carouselMode {
-            let escaped = relativePath.replacingOccurrences(of: "\\", with: "\\\\")
-                                      .replacingOccurrences(of: "`", with: "\\`")
-            js = "window.InkwellEditor.carouselReceiveImage(`\(escaped)`);"
-        } else {
-            let escaped = relativePath.replacingOccurrences(of: "\\", with: "\\\\")
-                                      .replacingOccurrences(of: "`", with: "\\`")
-            js = "window.InkwellEditor.applyImage(`\(escaped)`, ``);"
-        }
+        guard let relativePath = storePickedImage(at: url) else { return }
+        let escaped = relativePath.replacingOccurrences(of: "\\", with: "\\\\")
+                                  .replacingOccurrences(of: "`", with: "\\`")
+        let js = carouselMode
+            ? "window.InkwellEditor.carouselReceiveImage(`\(escaped)`);"
+            : "window.InkwellEditor.applyImage(`\(escaped)`, ``);"
         DispatchQueue.main.async { [weak self] in
             self?.webView.evaluateJavaScript(js)
         }
@@ -888,17 +924,8 @@ extension EditorCoordinator: PHPickerViewControllerDelegate {
         result.itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { [weak self] url, error in
             guard let self = self, let url = url else { return }
 
-            // Copy to document directory so webview sandbox can read it
-            let fileName = url.lastPathComponent
-            let dest: URL
-            if let baseDir = self.documentBaseURL {
-                dest = baseDir.appendingPathComponent(fileName)
-            } else {
-                dest = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-            }
-            try? FileManager.default.copyItem(at: url, to: dest)
-
-            let relativePath = dest.lastPathComponent
+            // Store into the note's <basename>/ folder (shared write path).
+            guard let relativePath = self.storePickedImage(at: url) else { return }
             let escaped = relativePath
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "`", with: "\\`")

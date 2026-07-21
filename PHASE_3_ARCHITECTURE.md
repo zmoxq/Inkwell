@@ -537,12 +537,33 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 | | 图片附件 | Mermaid/KaTeX 源码 |
 |---|---|---|
 | 性质 | 用户资产 | 渲染输入 |
-| 存储位置 | 磁盘文件(`attachments/`) | 永远在 .md 文件内(fenced block) |
-| Markdown 表示 | `![](attachments/foo.png)` | ` ```mermaid ... ``` ` |
-| DOM 表示 | `<img src="attachments/foo.png">` | `<div data-source-b64="..."><svg>...</svg></div>` |
+| 存储位置 | 磁盘文件(per-note `<basename>/` 文件夹) | 永远在 .md 文件内(fenced block) |
+| Markdown 表示 | `![](<basename>/foo-a1b2c3d4.png)` | ` ```mermaid ... ``` ` |
+| DOM 表示 | `<img src="<basename>/foo-a1b2c3d4.png">` | `<div data-source-b64="..."><svg>...</svg></div>` |
 | base64 涉及 | ❌ 不涉及 | ✅ DOM 内部临时形态 |
 
-**关键点**:base64 attribute 只是 DOM 内部状态,**保存到磁盘的 .md 文件里没有任何 base64**——磁盘上永远是干净的 fenced markdown。图片附件的现有处理逻辑保持原样,与扩展架构无关。
+**关键点**:base64 attribute 只是 DOM 内部状态,**保存到磁盘的 .md 文件里没有任何 base64**——磁盘上永远是干净的 fenced markdown。图片资产放在与笔记同级的 `<basename>/` 文件夹里(笔记 `foo.md` → `foo/`),markdown 用相对路径 `<basename>/<file>` 引用,解析基准是笔记所在目录(与下方 readLocalFile 读取边界同一目录)。
+
+### 图片附件写入:per-note 文件夹 + 共用写入逻辑(`InkwellAttachmentStore`)
+
+笔记 `<basename>.md` 的关联资产统一写入同级 `<basename>/` 文件夹。此**写入路径**的单一实现是 `Editor/InkwellAttachmentStore.swift`(Foundation-only、可单测,是读侧 `InkwellFileReadResolver` 的写侧姊妹)。两处调用者共享它,均不自己拼目录或起名:
+
+- `MarkdownDocument.saveAttachment`(model 层 API);
+- `EditorCoordinator` 的图片拷贝路径(carousel 与单图插入共用同一函数 `storePickedImage`)。
+
+> **背景更正(如实记录)**:本次接入前,`saveAttachment` 里已有 `<basename>/` 逻辑但**无人调用**,真正的图片拷贝路径(`sendImageURLToJS` / iOS picker)直接写到笔记所在目录并只引用裸文件名,污染笔记目录——这正是 Part 3 修的 bug。stock chart 并不写盘,它只经 `InkwellFileReadResolver` 按笔记目录**读** CSV;故"两边共用"实际收敛的是上面两个**写**入口,读侧另有其姊妹 resolver。carousel 与单图插入共用 `sendImageURLToJS`,同一根因同一修复,单图插入一并受益。
+
+**目录创建**:写入前 `ensureDirectory` 按需创建 `<basename>/`(已存在则复用,幂等)。
+
+**文件名冲突** → `<cleaned>-<shorthash>.<ext>`:
+
+- `cleaned`:保留 Unicode 字母/数字(中文、带音标名存活)+ `-`/`_`;空格、路径分隔符、文件系统/URL 敌意字符(`: ? * " < > | #` …)一律替换为 `-`;连续 `-` 折叠为一个;首尾 `-`/`_` 去除;截断到 40 字符;清理后为空则退化为 `image`。
+- `ext`:小写、仅字母数字、截断到 10 字符。
+- `shorthash`:内容 SHA-256 前 4 字节(8 位十六进制)。**内容寻址**:同名但**内容不同**的两个文件 → 哈希不同 → 落成两个文件;**同一份字节**插入两次 → 同名 → 复用既有文件(去重,两处引用指向同一文件)。
+
+**未保存笔记边界**:笔记无 URL/basename 时无法派生 `<basename>/`。当前架构下每个打开的文档都已有 URL(新建笔记在编辑前即以 `Untitled N.md` 落盘),故此路不可达;代码仍防御性守卫——`documentURL == nil` 时**不插入**图片并弹原生提示(macOS `NSAlert` / iOS `UIAlertController`),而非静默污染或静默失败。
+
+**删除语义**:删除 carousel 块(见 §3.5)**只移除 markdown 里的 `![]()` 引用,不删除磁盘图片文件**。理由:用户可能仅调整版式(删了重排),不应连带毁掉资产;由此产生的孤儿图片文件交由未来的"整理附件"命令处理(见 roadmap)。本次也**不迁移**已散落在笔记目录里的旧图片——同属整理命令范畴。
 
 ### readLocalFile 文件读取边界(D.15 修订版,2026-07-16)
 
