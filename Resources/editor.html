@@ -976,6 +976,17 @@
           }
           return el;
         },
+
+        // Attached-UI factory: same signature as createElement, but auto-tags
+        // the element as UI decoration — invisible to serializer / clipboard /
+        // LiveConverter via [data-inkwell-ui], and non-editable. Extension
+        // authors use this so they don't have to remember the §3.4 contract.
+        createUIElement(tag, attrs, ...children) {
+          const el = this.createElement(tag, attrs, ...children);
+          el.setAttribute('data-inkwell-ui', '');
+          el.setAttribute('contenteditable', 'false');
+          return el;
+        },
   
         // ---- 状态管理（Renderer 用）----
   
@@ -2916,6 +2927,18 @@
   // ----------------------------------------------------------
   // Markdown Serializer: HTML → Markdown
   // ----------------------------------------------------------
+  // Remove all attached-UI subtrees ([data-inkwell-ui]) from a tree before it
+  // reaches a content exit (serialize / clipboard). MUST be called on a
+  // DETACHED clone or a selection fragment — it mutates `root` in place, so
+  // calling it on the live editor would tear out the user's UI. Shared by the
+  // serializer and the clipboard handler. See PHASE_3_ARCHITECTURE.md §3.4.
+  function stripUIElements(root) {
+    if (root && root.querySelectorAll) {
+      root.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+    }
+    return root;
+  }
+
   const MarkdownSerializer = {
     serialize(el) {
       let md = '';
