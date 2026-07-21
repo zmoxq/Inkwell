@@ -5776,6 +5776,35 @@
       // restoreSelection() to reinstate on reactivation.
       this.element.addEventListener('blur', () => this.snapshotSelection());
 
+      // Clipboard (§3.4): strip attached-UI ([data-inkwell-ui]) from the
+      // copied/cut content so button / loading / error / handle text never
+      // leaks into the clipboard (esp. text/plain). Only intervene when the
+      // selection actually contains such an element — otherwise native
+      // copy/cut is left completely untouched (zero behavior change for
+      // ordinary selections). Uses the same stripUIElements as the serializer.
+      const stripClipboard = (e, isCut) => {
+        if (!e.clipboardData) return;
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+        const frag = sel.getRangeAt(0).cloneContents();
+        if (!frag.querySelector('[data-inkwell-ui]')) return;   // fast path: nothing to strip
+        stripUIElements(frag);
+        const holder = document.createElement('div');
+        holder.appendChild(frag);
+        e.clipboardData.setData('text/plain', holder.textContent);
+        e.clipboardData.setData('text/html', holder.innerHTML);
+        e.preventDefault();
+        if (isCut) {
+          // Route the deletion through the existing delete guards (which run on
+          // beforeinput / keydown) rather than a raw range delete, so a partial
+          // cut into a protected block (<pre> / renderer div) stays guarded.
+          document.execCommand('delete');
+          this.onContentChange();
+        }
+      };
+      this.element.addEventListener('copy', (e) => stripClipboard(e, false));
+      this.element.addEventListener('cut',  (e) => stripClipboard(e, true));
+
       this.setupKeyboardShortcuts();
 
       // Listen for dark mode changes to swap hljs theme
