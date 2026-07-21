@@ -6085,7 +6085,12 @@
         });
         this.element.normalize();
       }
-      return MarkdownSerializer.serialize(this.element);
+      // Strip attached-UI subtrees ([data-inkwell-ui]) on a CLONE so the live
+      // editor is untouched, then serialize the clean tree. This is a
+      // pre-processing step BEFORE the serializer's source-authority priority
+      // (§7) — it does not change that priority. §3.4 data-inkwell-ui contract.
+      const clean = stripUIElements(this.element.cloneNode(true));
+      return MarkdownSerializer.serialize(clean);
     },
 
     applyTheme(css) {
