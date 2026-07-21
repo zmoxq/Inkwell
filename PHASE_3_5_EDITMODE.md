@@ -250,6 +250,8 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 **升级时机**:若出现第二种注入 contentEditable DOM 的 UI 装饰物,应升级为统一标记属性(如 `data-inkwell-ui`)过滤,而非逐一枚举 class name。
 
+> **已兑现(2026-07-20)**:`data-inkwell-ui` 契约落地,见 `PHASE_3_ARCHITECTURE.md` §3.4。serializer/剪贴板经统一 `stripUIElements` 剥除,LiveConverter `getBlockSourceText` 改按属性跳过。既有 keydown/beforeinput 删除守卫等**非内容出口**处的逐 class 枚举保留原样(不在内容出口范围)。
+
 ### 实施记录:§5.2 leave-edit 块类型派发扩展
 
 **设计文档盲区**:§5.2 的 leave-edit 路径和 §5.1 的 enter-edit 路径均以围栏代码块(` ``` `)为中心描述,未明确涵盖 `display-math`(`$$...$$`)块类型。实施时 `_doEnterEdit` / `_doLeaveEdit` 最初仅处理围栏格式,导致 KaTeX 公式块点击进入编辑后离开时无法重渲染。
@@ -286,7 +288,7 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 | 编号 | 债务 | 来源 | 升级条件 |
 |------|------|------|----------|
 | D1 | Undo 不可撤销边界 | OQ1 裁决 | enter/leave-edit 的 `replaceChild` 不进浏览器 undo 栈。`<pre>` 内 Enter 直接 DOM 插入的换行也不进撤销栈。若用户反馈强烈,需引入自管 undo 系统。 |
-| D2 | UI 装饰物排除硬编码 | getBlockSourceText | 仅排除 `.inkwell-drag-handle`。第二种 UI 装饰物出现时需升级为统一 `data-inkwell-ui` 属性过滤。 |
+| D2 | ~~UI 装饰物排除硬编码~~ **已兑现(2026-07-20)** | getBlockSourceText | ~~仅排除 `.inkwell-drag-handle`~~。已升级为统一 `data-inkwell-ui` 属性契约,见 `PHASE_3_ARCHITECTURE.md` §3.4。 |
 | D3 | §5.2 块类型派发 | Step 4 实施 | enter/leave-edit 按定界符格式派发(`` ``` `` 和 `$$`)。新增非围栏块类型时,`_doEnterEdit` 定界符检测和 `_doLeaveEdit` block descriptor 构造是必经改动点。 |
 
 ### 契约变更:§4 blur 语义收窄

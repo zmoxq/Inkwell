@@ -1,8 +1,8 @@
 # Inkwell Phase 3 — 扩展架构
 
 > **Status**: PR 1、PR 2 已完成。当前活跃扩展：`highlight-code`、`highlight-mark`、`mermaid`。
-> **Document Version**: 2.0 — 现状描述版(整合 1.1 正文 + 附录 C 实施记录)
-> **Last Updated**: 2026-05-13
+> **Document Version**: 2.1 — 增补 §3.4 UI 装饰排除契约(`data-inkwell-ui`)
+> **Last Updated**: 2026-07-20
 > **适用范围**: Inkwell macOS/iOS WYSIWYG Markdown 编辑器,editor.html 内的扩展机制
 
 ---
@@ -156,6 +156,39 @@ ExtensionRegistry.registerInline({
 - 不感知 code span / escape / emphasis 上下文
 - KaTeX inline、复杂 mention 等需要 parser-aware 扩展点,**留待 InlineRegistry v2**(见路线图 PR 5)
 
+### 3.4 UI 装饰排除契约(`data-inkwell-ui`)
+
+DOM 中存在**非内容**元素:`renderer-edit-action` 按钮、loading 占位、错误 UI、DragSort 拖拽柄、标题折叠钮、carousel 导航控件等。它们必须活在 live DOM 里(供交互),但绝不能进入任何"内容出口"。此前它们不落盘靠两条兜底:BlockRenderer 的 `data-source-b64` 源码权威(serializer 读 b64,忽略渲染产物),以及 serializer/剪贴板/LiveConverter 各处**逐 class 枚举**跳过(`.inkwell-drag-handle` / `.inkwell-fold-toggle`)。前者覆盖不到源码权威之外的路径(Decorator 块、未来插入可编辑区域的 UI);后者每新增一种装饰物就要在每个出口补一处枚举,易漏。本契约用一个显式属性消除这类静默污染的可能性。
+
+**契约**:带 `data-inkwell-ui` 属性的元素**及其整个子树**,对以下三条"内容出口"不可见:
+
+| 路径 | 剥除方式 |
+|------|---------|
+| **Serializer** | 遍历前在**克隆副本**上剥除(`stripUIElements`),不动 live DOM |
+| **剪贴板(copy/cut)** | 写入 clipboard 前对选区克隆片段剥除(同一 `stripUIElements`) |
+| **LiveConverter** | 文本扫描/块识别(`getBlockSourceText`)入口处跳过带此属性的子树 |
+
+统一剥除函数(serializer 与剪贴板共用,各自传入自己的克隆):
+
+```javascript
+// 仅在脱离文档的克隆/片段上调用——原地移除,会破坏 live UI。
+function stripUIElements(root) {
+  root.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+  return root;
+}
+```
+
+LiveConverter 因其扫描机制不同,不做"克隆-剥除"而做"扫描-跳过"(遍历子节点时按同一属性略过)。三条路径共享的是**同一组被排除元素**(`[data-inkwell-ui]`),而非同一遍历策略。
+
+**边界**:
+
+- `data-inkwell-ui` 标记的是"**附加** UI 元素",**不用于"被装饰的内容本身"**。hljs 着色 span **不带**此属性——Decorator 产物的源码本就在 core 渲染的 `<code>` textContent 里,走既有 `<pre><code>` 文本提取路径序列化。渲染产物(mermaid SVG、stockchart 标题/画布、carousel 的图片幻灯)同理属"内容/渲染",**不打标**;只有其上的**附加控件**(edit-button、loading/error 占位、carousel 箭头/圆点/计数器)才打标。find/replace 的 `.inkwell-find-highlight` 也不打标:它包裹的是用户内容,序列化时**解包保留 inner**,而非整体剥除。
+- 与 `contenteditable="false"` **正交**:前者管**序列化可见性**,后者管**编辑可达性**。UI 装饰元素通常两者都带,但二者独立——一个元素可以 CE=false 却参与序列化(被装饰内容),也可以带 `data-inkwell-ui` 而由祖先继承 CE=false(如 renderer root 内的 edit-button)。
+
+**设计债(如实记录)**:serializer 现每次 `getMarkdown()`(每次内容变更即调)克隆整棵 `#editor`(含渲染产物 SVG/canvas)后剥除。典型文档成本可忽略(cloneNode 为原生实现,数千节点亚毫秒级);极端大文档(多张复杂 mermaid)若每键一次深克隆成瓶颈,回退方向:serializer 改为 live 遍历 + `serializeNode` 内行内跳过 `[data-inkwell-ui]`(放弃与剪贴板的**函数**共享,保留**属性**共享)。
+
+> 本契约兑现了 `PHASE_3_5_EDITMODE.md` 附录设计债 **D2**("第二种注入 contentEditable DOM 的 UI 装饰物出现时,应升级为统一 `data-inkwell-ui` 属性过滤")。逐 class 枚举的既有跳过点(keydown/beforeinput 删除守卫、slash 菜单块文本、导出路径)不在本次"内容出口"范围内,保留原样;drag-handle/fold-toggle 现同时带 class 与属性,两套过滤并存无冲突。
+
 ### 关于源码存储:为什么用 base64 attribute
 
 三种方案对比后的选择:
@@ -179,6 +212,7 @@ ExtensionRegistry.registerInline({
   // DOM 构造
   createBlockRoot({ renderer, sourceMarkdown, language, editStyle }),
   createElement(tag, attrs, ...children),
+  createUIElement(tag, attrs, ...children),   // 附加 UI 件:自动带 data-inkwell-ui + contenteditable="false"
 
   // 状态管理
   setLoading(rootEl, message),
@@ -220,6 +254,17 @@ context.runAsync(root, async (signal) => {
 - AbortSignal 透传给 renderer,避免快速切换主题等场景的竞态
 - 异常自动捕获,调用 onError,不污染主流程
 - **onError 必填**:强制 renderer 作者思考错误 UX,避免 core 用一套通用 fallback 误处理所有错误
+
+### `createUIElement`
+
+与 `createElement` 同签名,额外自动附加 `data-inkwell-ui`(序列化/剪贴板不可见,见 §3.4)与 `contenteditable="false"`(编辑不可达)。扩展作者用它创建"附加 UI 件"(按钮、提示、浮层控件),无需记住 §3.4 契约:
+
+```javascript
+const btn = context.createUIElement('button', { className: 'my-action' }, 'Reload');
+// → <button class="my-action" data-inkwell-ui contenteditable="false">Reload</button>
+```
+
+**约定**:core 内部创建的 UI 件(edit-button / loading / error 占位)直接加属性;**扩展内**创建的 UI 件一律走 `createUIElement`。内置 image-group(carousel)扩展的箭头/圆点/计数器是首个真实消费者。
 
 ---
 
@@ -587,6 +632,7 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 | 大型 JS 库管理 | 自定义 `inkwell-asset://` scheme + Bundle | 不污染用户目录;跟随 app 版本;零复制 IO |
 | readLocalFile 边界基准(2026-07-16 修订) | 笔记所在目录(见 §十一 D.15 修订版) | 初版 `<docname>/` 前缀在 rename 后必断且与图片通道不对称;目录基准下两通道同一边界,穿越防护强度不变 |
 | 围栏语言的权威来源(2026-07-16) | 作者声明的语言;hljs 的自动探测**仅供显示**,不得进入序列化 | 与「源码权威性」同源:探测结果一旦留在 DOM 的 `language-*` class 上,serializer 会把它当成用户写的语言存盘——无语言围栏存盘后变 ```ruby,即捏造源码 |
+| UI 装饰排除机制(2026-07-20) | `data-inkwell-ui` 属性 + 统一 `stripUIElements`(serializer/剪贴板)+ 扫描跳过(LiveConverter);见 §3.4 | 逐 class 枚举覆盖不到源码权威之外的路径(Decorator 块、未来可编辑区域 UI),且每新增装饰物需补多处;显式属性契约消除静默污染,兑现 3.5 设计债 D2 |
 
 ---
 
@@ -601,6 +647,8 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 - **AbortSignal**:浏览器原生 API,runAsync 内部使用以防止竞态
 - **safeCall**:包裹所有 renderer 方法调用的错误隔离层
 - **占位符路径**:parser 输出 `inkwell-pending-renderer` div,加载后由 `_resolvePendingRenderers()` 替换为真 DOM
+- **`data-inkwell-ui`**:标记"附加 UI 元素"的属性,其子树对 serializer / 剪贴板 / LiveConverter 三条内容出口不可见(§3.4)
+- **`stripUIElements`**:在克隆副本/选区片段上原地移除全部 `[data-inkwell-ui]` 子树的共享函数,serializer 与剪贴板共用
 
 ---
 
@@ -619,4 +667,4 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 ---
 
-*Document version: 2.0 — 整合实施现实,删除过期路线图细节*
+*Document version: 2.1 — 增补 UI 装饰排除契约(`data-inkwell-ui`,§3.4);v2.0 整合实施现实,删除过期路线图细节*
