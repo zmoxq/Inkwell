@@ -3140,14 +3140,14 @@
       this.editor = editor;
     },
 
-    // Return the user-authored text of a block element, excluding UI
-    // decorations injected into the contentEditable DOM (e.g. drag handles).
-    // Currently only strips .inkwell-drag-handle; see PHASE_3_5_EDITMODE.md
-    // appendix for the design-debt note on generalizing this.
+    // Return the user-authored text of a block element, excluding attached-UI
+    // decorations injected into the contentEditable DOM (drag handles, fold
+    // toggles, etc.). Skips any [data-inkwell-ui] child subtree per the §3.4
+    // contract, so LiveConverter block matching never sees their text.
     getBlockSourceText(el) {
       let t = '';
       for (const ch of el.childNodes) {
-        if (ch.nodeType === Node.ELEMENT_NODE && ch.classList.contains('inkwell-drag-handle')) continue;
+        if (ch.nodeType === Node.ELEMENT_NODE && ch.hasAttribute('data-inkwell-ui')) continue;
         t += ch.textContent;
       }
       return t;
