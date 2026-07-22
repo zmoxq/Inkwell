@@ -3913,10 +3913,12 @@
         !(node.getAttribute && node.getAttribute('contenteditable') === 'false');
     },
 
-    // Atomic, undoable removal of an entire top-level block (direct child of
-    // #editor). Routed through execCommand so the whole subtree is a SINGLE
-    // native undo unit — Cmd+Z restores it in one step (§3.5, D1). A raw
-    // remove()/replaceChild would not enter the browser undo stack at all.
+    // Removal of an entire top-level block (direct child of #editor).
+    // Atomicity now comes from the undo source-snapshot stack (one discrete
+    // step, §11.9), NOT from execCommand — so this is a plain DOM remove().
+    // That also drops the WebKit-specific risks of the old
+    // selectNode+execCommand('delete') approach (neighbour-paragraph merge,
+    // subtree-restore fidelity, empty-doc caret).
     deleteBlock(blockEl) {
       const editor = this.editor.element;
       if (!blockEl || blockEl.parentNode !== editor) return;
@@ -3925,12 +3927,7 @@
       const prev = blockEl.previousElementSibling;
       const next = blockEl.nextElementSibling;
 
-      const sel = window.getSelection();
-      const range = document.createRange();
-      range.selectNode(blockEl);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      document.execCommand('delete');
+      blockEl.remove();
 
       // Keep the document editable. When the deleted block was the only
       // content, ensureEdgeGaps inserts a fresh <p><br></p> and focuses it —
@@ -3940,6 +3937,7 @@
         this._placeCaret(prev, next);
       }
 
+      UndoStack.markDiscrete();     // block deletion = one atomic undo step
       this.editor.onContentChange();
     },
 
@@ -5282,6 +5280,7 @@
           break;
         }
       }
+      UndoStack.markDiscrete();   // slash-menu insert = one atomic undo step (§11.2)
       ed.onContentChange();
     },
 
@@ -5643,6 +5642,247 @@
   window.EditMode = EditMode;
 
   // ----------------------------------------------------------
+  // Undo/Redo — self-built source-snapshot stack (§11).
+  // Stores markdown source snapshots + logical cursor anchors. Undo restores
+  // the previous source, re-parses/renders, and restores the caret. Rendered
+  // state is a projection of source and never enters the stack — view-only
+  // transitions (cursor-leave render, enter/leave-edit, theme, async render)
+  // produce identical source so onContentChange never records them. Replaces
+  // the native contentEditable undo stack (D1 retired). See §11.
+  // ----------------------------------------------------------
+  const UndoStack = {
+    editor: null,
+    MAX_STEPS: 100,
+    MAX_BYTES: 32 * 1024 * 1024,   // §11.4 byte budget
+    IDLE_MS: 1000,                 // §11.3 idle break
+
+    _stack: [],        // [{ source, anchorBefore, anchorAfter, bytes }]
+    _idx: -1,          // current committed state; entries after _idx are redo
+    _bytes: 0,
+    _groupOpen: false, // an in-progress coalescing group lives at _stack[_idx]
+    _lastEditAt: 0,
+    _lastPostCaret: null,  // caret after the last recorded edit (jump detection)
+    _preEditCaret: null,   // caret captured before the imminent mutation
+    _composing: false,
+    _breakNext: false,     // force a new group on the next edit
+    _pendingDiscrete: false,
+    _restoring: false,     // suppress recording while undo/redo rebuilds DOM
+
+    init(editor) {
+      this.editor = editor;
+      const el = editor.element;
+      el.addEventListener('beforeinput', (e) => {
+        if (this._composing) return;
+        this._preEditCaret = this._anchor();
+        const t = e.inputType || '';
+        // Paste and one-shot format commands are discrete single steps (§11.2).
+        if (t === 'insertFromPaste' || t === 'insertFromDrop' ||
+            t.indexOf('format') === 0 || t === 'insertUnorderedList' ||
+            t === 'insertOrderedList' || t === 'insertHorizontalRule') {
+          this._pendingDiscrete = true;
+        }
+      });
+      // IME: one composition = one step; never split mid-composition (§11.4).
+      el.addEventListener('compositionstart', () => { this._composing = true; });
+      el.addEventListener('compositionend', () => {
+        this._composing = false;
+        this._record(false);      // fold the whole composition into one group
+        this._breakNext = true;   // next edit starts fresh
+      });
+      // keydown fires before the mutation, so it is the reliable capture point
+      // for a new group's anchorBefore (beforeinput does not fire for every
+      // input path, e.g. programmatic execCommand). Navigation keys also set it
+      // harmlessly — it is only consumed when a group actually opens.
+      el.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        this._preEditCaret = this._anchor();
+        // Enter = newline break condition (§11.3): close the group after it.
+        if (e.key === 'Enter') this._breakNext = true;
+      });
+    },
+
+    // Seed with the loaded document as base state. A fresh document is a fresh
+    // history, so this resets. Called from loadMarkdown and empty-doc init.
+    reset() {
+      const src = this.editor.lastContent || '';
+      this._stack = [{ source: src, anchorBefore: null, anchorAfter: this._anchor(), bytes: src.length }];
+      this._idx = 0;
+      this._bytes = src.length;
+      this._groupOpen = false;
+      this._lastPostCaret = null;
+      this._breakNext = false;
+      this._pendingDiscrete = false;
+      this._pushState();
+    },
+
+    // Called from onContentChange AFTER lastContent changed (source-changing
+    // edits only — view-only transitions don't reach here, §11.2).
+    onEdit() {
+      if (this._restoring || this._composing) return;
+      this._record(this._pendingDiscrete);
+    },
+
+    markDiscrete() { this._pendingDiscrete = true; },   // programmatic single-step ops
+
+    _record(discrete) {
+      const src = this.editor.lastContent;
+      const now = Date.now();
+      const post = this._anchor();
+      const idle = this._groupOpen && (now - this._lastEditAt > this.IDLE_MS);
+      const jump = this._groupOpen && this._lastPostCaret &&
+                   !this._contiguous(this._lastPostCaret, this._preEditCaret || post);
+      const openNew = !this._groupOpen || discrete || this._breakNext || idle || jump;
+
+      if (openNew) {
+        if (this._idx < this._stack.length - 1) {          // drop redo branch
+          for (let k = this._idx + 1; k < this._stack.length; k++) this._bytes -= this._stack[k].bytes;
+          this._stack.length = this._idx + 1;
+        }
+        const cur = this._stack[this._idx];
+        const before = this._preEditCaret || (cur ? cur.anchorAfter : null);
+        this._stack.push({ source: src, anchorBefore: before, anchorAfter: post, bytes: src.length });
+        this._bytes += src.length;
+        this._idx = this._stack.length - 1;
+        this._groupOpen = !discrete;      // discrete ops close immediately
+      } else {
+        const e = this._stack[this._idx];  // coalesce into the current group
+        this._bytes += src.length - e.bytes;
+        e.source = src; e.bytes = src.length; e.anchorAfter = post;
+      }
+      this._breakNext = false;
+      this._pendingDiscrete = false;
+      this._lastEditAt = now;
+      this._lastPostCaret = post;
+      this._preEditCaret = null;
+      this._evict();
+      this._pushState();
+    },
+
+    _evict() {
+      while (this._stack.length > this.MAX_STEPS ||
+             (this._bytes > this.MAX_BYTES && this._stack.length > 1)) {
+        this._bytes -= this._stack.shift().bytes;
+        this._idx--;
+      }
+      if (this._idx < 0) this._idx = 0;
+    },
+
+    canUndo() { return this._idx > 0; },
+    canRedo() { return this._idx < this._stack.length - 1; },
+
+    undo() {
+      if (!this.canUndo()) return;
+      const caret = this._stack[this._idx].anchorBefore;   // §11.5 anchorBefore
+      this._idx--;
+      this._groupOpen = false;
+      this._apply(this._stack[this._idx].source, caret);
+    },
+
+    redo() {
+      if (!this.canRedo()) return;
+      const target = this._stack[this._idx + 1];
+      this._idx++;
+      this._groupOpen = false;
+      this._apply(target.source, target.anchorAfter);      // §11.5 anchorAfter
+    },
+
+    _apply(source, anchor) {
+      this._restoring = true;
+      try {
+        this.editor.restoreSource(source);   // re-parse/render, no recording
+        this._restoreAnchor(anchor);
+      } finally { this._restoring = false; }
+      this._lastPostCaret = anchor;
+      this._pushState();
+    },
+
+    _pushState() {
+      // Push canUndo/canRedo on stack change only (record/undo/redo/reset) —
+      // not per keystroke (§11.8). Drives Swift Edit-menu enablement.
+      this.editor.postMessage('undoState', { canUndo: this.canUndo(), canRedo: this.canRedo() });
+    },
+
+    // ---- Logical anchor { blockIndex, charOffset, inEditingFence } (§11.6) ----
+
+    _anchor() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const range = sel.getRangeAt(0);
+      const el = this.editor.element;
+      if (!el.contains(range.startContainer)) return null;
+      let block = range.startContainer;
+      if (block === el) {
+        block = el.children[Math.min(range.startOffset, el.children.length - 1)] || null;
+      } else {
+        while (block && block.parentNode !== el) block = block.parentNode;
+      }
+      if (!block) return null;
+      return {
+        blockIndex: Array.prototype.indexOf.call(el.children, block),
+        charOffset: this._charOffset(block, range.startContainer, range.startOffset),
+        inEditingFence: block.tagName === 'PRE' && !!block.querySelector('code.inkwell-live-fence')
+      };
+    },
+
+    _charOffset(block, container, offset) {
+      try {
+        const r = document.createRange();
+        r.selectNodeContents(block);
+        r.setEnd(container, offset);
+        return r.toString().length;
+      } catch (e) { return 0; }
+    },
+
+    _restoreAnchor(anchor) {
+      if (!anchor) return;
+      const el = this.editor.element;
+      let block = el.children[anchor.blockIndex] || el.lastElementChild;
+      if (!block) return;
+      if (anchor.inEditingFence) {
+        try { EditMode.requestEnterEdit(block, { via: 'edit-button' }); } catch (e) {}
+        block = el.children[anchor.blockIndex] || block;   // fence <pre> may have replaced it
+      }
+      const pos = this._locateChar(block, anchor.charOffset);
+      try {
+        const range = document.createRange();
+        if (pos) { range.setStart(pos.node, pos.offset); }
+        else { range.selectNodeContents(block); }
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (e) { /* degrade silently (§11.6) */ }
+    },
+
+    _locateChar(block, target) {
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      let seen = 0, node, last = null;
+      while ((node = walker.nextNode())) {
+        const len = node.textContent.length;
+        if (seen + len >= target) return { node, offset: Math.max(0, target - seen) };
+        seen += len; last = node;
+      }
+      return last ? { node: last, offset: last.textContent.length } : null;
+    },
+
+    _contiguous(a, b) {
+      return !!a && !!b && a.blockIndex === b.blockIndex && Math.abs(a.charOffset - b.charOffset) <= 1;
+    },
+
+    // Cursor-jump break (§11.3): if the caret moves non-contiguously while a
+    // group is open, close it so the next edit starts a new step.
+    onSelectionChange() {
+      if (this._restoring || this._composing || !this._groupOpen) return;
+      const cur = this._anchor();
+      if (cur && this._lastPostCaret && !this._contiguous(this._lastPostCaret, cur)) {
+        this._groupOpen = false;
+      }
+    }
+  };
+
+  window.UndoStack = UndoStack;
+
+  // ----------------------------------------------------------
   // Editor Core
   // ----------------------------------------------------------
   const Editor = {
@@ -5663,6 +5903,9 @@
 
       // Initialize block deletion (shared by table + carousel block menus)
       BlockDeletion.init(this);
+
+      // Initialize the self-built undo/redo stack (§11)
+      UndoStack.init(this);
 
       // Initialize table manager
       TableManager.init(this);
@@ -5947,7 +6190,10 @@
         }
       });
 
-      document.addEventListener('selectionchange', () => this.updateSelectionState());
+      document.addEventListener('selectionchange', () => {
+        this.updateSelectionState();
+        UndoStack.onSelectionChange();   // cursor-jump break detection (§11.3)
+      });
 
       // Snapshot the caret when this resident editor loses webView-level focus
       // (e.g. switching to another tab). At blur time WebKit still exposes the
@@ -5995,6 +6241,10 @@
       // Ensure empty editor (new document, no loadMarkdown call) is usable
       this.ensureEdgeGaps();
       DragSort.refresh();
+
+      // Seed the undo stack with the initial (possibly empty) document, so a
+      // new note that never gets loadMarkdown still has a base state (§11.4).
+      UndoStack.reset();
 
       this.postMessage('editorReady', {});
     },
@@ -6044,6 +6294,9 @@
       const md = this.getMarkdown();
       if (md !== this.lastContent) {
         this.lastContent = md;
+        // Record an undo step (§11). Only source-changing edits reach here;
+        // view-only transitions serialize to the same md and are skipped.
+        UndoStack.onEdit();
         this.postMessage('contentChange', { content: md });
       }
       WordCount.update();
@@ -6053,6 +6306,19 @@
     },
 
     loadMarkdown(markdown) {
+      this._loadInto(markdown);
+      // A freshly loaded document is a fresh undo history (§11.4).
+      UndoStack.reset();
+    },
+
+    // Re-render `markdown` into the editor WITHOUT touching undo history.
+    // Used by UndoStack.undo/redo to restore a source snapshot (§11.5). The
+    // caller wraps this in _restoring so no edit is recorded.
+    restoreSource(markdown) {
+      this._loadInto(markdown);
+    },
+
+    _loadInto(markdown) {
       this.lastContent = markdown;
       this.element.innerHTML = MarkdownParser.parse(markdown);
       this.element.querySelectorAll('input[type="checkbox"]').forEach(cb => {
@@ -6319,7 +6585,13 @@
         const key = e.key.toLowerCase();
         let handled = true;
 
-        if      (key === 'b' && !e.shiftKey) this.execFormat('bold');
+        // Undo/redo: self-built source-snapshot stack (§11). Intercept so the
+        // native contentEditable stack never runs (D1 retired). Swift also
+        // routes the Edit menu here — the native undoManager must never fire.
+        if      (key === 'z' && !e.shiftKey) UndoStack.undo();
+        else if (key === 'z' && e.shiftKey)  UndoStack.redo();
+        else if (key === 'y' && !e.shiftKey) UndoStack.redo();
+        else if (key === 'b' && !e.shiftKey) this.execFormat('bold');
         else if (key === 'i' && !e.shiftKey) this.execFormat('italic');
         else if (key === 'k' && !e.shiftKey) this.execFormat('link');
         else if (key === 'e' && !e.shiftKey) this.execFormat('inlineCode');
@@ -6725,6 +6997,12 @@
   window.InkwellEditor = {
     loadMarkdown: (md) => Editor.loadMarkdown(md),
     getMarkdown: () => Editor.getMarkdown(),
+    // Undo/redo bridge (§11.8): the Swift Edit menu calls these into the
+    // self-built stack. Never route to webView.undoManager.
+    undo: () => UndoStack.undo(),
+    redo: () => UndoStack.redo(),
+    canUndo: () => UndoStack.canUndo(),
+    canRedo: () => UndoStack.canRedo(),
     applyTheme: (css) => Editor.applyTheme(css),
     execFormat: (cmd, param) => Editor.execFormat(cmd, param),
     focus: () => {
