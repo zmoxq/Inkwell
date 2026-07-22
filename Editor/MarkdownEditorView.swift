@@ -191,7 +191,10 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     var formatState: EditorFormatState?
     /// Find/replace state — set by ContentView, updated by findResults messages
     var findReplaceState: FindReplaceState?
-    
+    /// Undo/redo availability callback — set by ContentView, invoked from the
+    /// 'undoState' message so the active tab can drive Edit-menu enablement.
+    var onUndoStateChange: ((Bool, Bool) -> Void)?
+
     private var webView: WKWebView!
     private var isEditorReady = false
     private var isUpdatingFromJS = false
@@ -331,6 +334,24 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     
     func focus() {
         webView.evaluateJavaScript("window.InkwellEditor.focus();")
+    }
+
+    // MARK: - Undo/Redo (§11.8)
+    // These route the Edit menu into the JS self-built stack. The webView's
+    // native undoManager is never used — the default .undoRedo CommandGroup is
+    // replaced (removing the items that would route to it).
+
+    func performUndo() { webView.evaluateJavaScript("window.InkwellEditor.undo();") }
+    func performRedo() { webView.evaluateJavaScript("window.InkwellEditor.redo();") }
+
+    /// Pull the current canUndo/canRedo from JS (used on tab switch, since the
+    /// stack only pushes on change, so the newly active editor may not have
+    /// pushed recently).
+    func refreshUndoState() {
+        webView.evaluateJavaScript("[window.InkwellEditor.canUndo(), window.InkwellEditor.canRedo()]") { [weak self] result, _ in
+            guard let self = self, let arr = result as? [Bool], arr.count == 2 else { return }
+            self.onUndoStateChange?(arr[0], arr[1])
+        }
     }
 
     /// Ask this editor to snapshot its current caret/selection. Called by
@@ -557,6 +578,14 @@ class EditorCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         case "selectionChange":
             DispatchQueue.main.async { [weak self] in
                 self?.formatState?.update(from: payload)
+            }
+
+        case "undoState":
+            // §11.8: JS pushes canUndo/canRedo on stack change (not per key).
+            let canUndo = payload["canUndo"] as? Bool ?? false
+            let canRedo = payload["canRedo"] as? Bool ?? false
+            DispatchQueue.main.async { [weak self] in
+                self?.onUndoStateChange?(canUndo, canRedo)
             }
             
         case "showFindReplace":

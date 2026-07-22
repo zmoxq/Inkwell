@@ -261,6 +261,13 @@ struct GeneralSettingsView: View {
     }
 }
 
+// MARK: - Undo/Redo command routing (§11.8)
+
+extension Notification.Name {
+    static let inkwellUndo = Notification.Name("inkwellUndo")
+    static let inkwellRedo = Notification.Name("inkwellRedo")
+}
+
 // MARK: - macOS Menu Commands
 
 #if os(macOS)
@@ -300,6 +307,24 @@ struct InkwellCommands: Commands {
             .keyboardShortcut("o", modifiers: .command)
         }
         
+        // §11.8: replace the default Undo/Redo so the WKWebView's native
+        // undoManager is never invoked (dual-stack is the worst failure mode).
+        // These route into the JS self-built stack via NotificationCenter →
+        // ContentView → the active editor coordinator.
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                NotificationCenter.default.post(name: .inkwellUndo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(!appState.canUndo)
+
+            Button("Redo") {
+                NotificationCenter.default.post(name: .inkwellRedo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(!appState.canRedo)
+        }
+
         CommandGroup(replacing: .saveItem) {
             Button("Save") {
                 appState.saveCurrentDocument()

@@ -9,6 +9,12 @@ class AppState: ObservableObject {
     @Published var fileTree: [FileNode] = []
     @Published var currentThemeCSS: String = ""
     @Published var isEditorReady: Bool = false
+    // Undo/redo availability for the ACTIVE editor, pushed from JS on stack
+    // change (§11.8). Drives the Edit-menu item enabled state. Best-effort:
+    // the JS keydown handler is the real workhorse, so stale enablement never
+    // breaks undo — it only greys the menu item.
+    @Published var canUndo: Bool = false
+    @Published var canRedo: Bool = false
     @Published var isSidebarVisible: Bool = true
     @Published var sidebarMode: SidebarMode = .files
     @Published var outlineItems: [OutlineItem] = []

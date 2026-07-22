@@ -82,6 +82,15 @@ struct ContentView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 coordinators[id]?.makeEditorFirstResponder()
             }
+            // Refresh Edit-menu enablement from the newly active editor (§11.8);
+            // the stack only pushes on change, so pull its current state now.
+            coordinators[id]?.refreshUndoState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inkwellUndo)) { _ in
+            activeCoordinator?.performUndo()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inkwellRedo)) { _ in
+            activeCoordinator?.performRedo()
         }
         .onChange(of: appState.openTabs.map(\.id)) { _, ids in
             // A tab was closed → drop its coordinator so the EditorCoordinator /
@@ -194,6 +203,15 @@ struct ContentView: View {
                                 coordinator.formatState = formatState
                                 coordinator.findReplaceState = findReplaceState
                                 coordinator.setZoom(appState.zoomLevel)
+                                // §11.8: only the active tab drives Edit-menu
+                                // enablement. Captures appState (app singleton)
+                                // + tab.id (value) — never the coordinator/self.
+                                coordinator.onUndoStateChange = { canUndo, canRedo in
+                                    if appState.activeTabId == tab.id {
+                                        appState.canUndo = canUndo
+                                        appState.canRedo = canRedo
+                                    }
+                                }
                                 coordinators[tab.id] = coordinator
                             }
                         )
