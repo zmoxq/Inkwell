@@ -336,6 +336,25 @@ D1 原条目在"设计债汇总"中**保留并加退休批注**(取代原因 = �
 
 **验收(harness 实测通过)**:#1 空行(含多个"上上空行")undo 后保留;#4 undo 后光标落回被保留的正确行;#2 空块 undo 后光标可见;回归——连续输入合并、enter/leave-edit 零步、mermaid/katex/table/carousel 经 undo round-trip 干净(无 SVG 落盘)、redo、块删除单步,全部通过。**WKWebView 实机交互仍待用户验收**。
 
+### 11.13 代码 / math 区禁用系统文本处理(2026-07-23)
+
+**动机**:系统级文本处理(autocorrect、拼写检查、智能引号 / 破折号)对代码标识符与 LaTeX 宏是纯破坏源——已确认的 #3(`today`→`todya`)即 autocorrect 静默替换。散文区保留合理,**代码 / 公式区必须关闭**。
+
+**范围**:fenced code 源码编辑态、`$$` math 源码编辑态、行内 code span。**散文区完全不动**。
+
+**机制**:统一 `disableTextProcessing(el)` 对元素(及其内 `<code>`)设 `spellcheck="false"` `autocorrect="off"` `autocapitalize="off"`。调用点覆盖两类:
+
+- **静态**(冷加载 / dehydrated 恢复):`_hydrateDOM` 在 `_resolvePendingRenderers` 之后 `querySelectorAll('pre, code')` 批量应用——顺带覆盖 renderer-fallback 的 `<pre>`。
+- **动态创建**(进入编辑态即生效):`EditMode._doEnterEdit`(渲染块→源码 fence)、`LiveConverter` 的 ` ``` ` / `$$` fence 与行内 code、SlashMenu 的 code / math、`toggleInlineCode`、`insertCodeBlock`。均在**元素插入 DOM、光标进入之前**调用。
+
+**动态生效实测(harness,Chromium)**:进入编辑态时 fence 的 `<pre>` 与 `<code>` 均带三属性;IDL `.spellcheck` **有效为 `false`**(散文 `<p>` 仍 `true`),即属性真正生效非仅存在;**进出编辑态多次往返稳定**;经 dehydrated-DOM undo 恢复(走 `_hydrateDOM`)后仍保持。散文 `<p>` 三属性均 `null`,行为不变。
+
+**Swift 侧现状(只报告,不改)**:`createWebView` 的 `WKWebViewConfiguration` 仅设 `allowFileAccessFromFileURLs` / `drawsBackground`,**无任何文本替换 / 拼写 / 智能引号配置**。macOS 上 WKWebView 的拼写与 autocorrect 遵循 HTML `spellcheck` / `autocorrect` 属性(本次已设);**不改全局配置**——app 级关闭会误伤散文区。
+
+**智能引号 / 破折号(重点,拦截方案只报告不实施)**:三属性覆盖拼写与 autocorrect,但**智能引号 / 破折号是 macOS 独立的文本替换层**(系统"智能引号和破折号"设置,`NSAutomaticQuoteSubstitution`),`spellcheck` / `autocorrect` 属性**很可能不足以阻止**它。Chromium 无此层,无法实测——需用户在 WKWebView 验收第 2 项(`"hello"` / `--flag` 是否保持直引号 / 双连字符)。**若属性不足**,拦截方案(未实施):在 `beforeinput` / `input` 处**区分区域**——光标在 code / math 区且检测到替换产物(弯引号 `" " ' '`、em/en dash `— –`,或 `inputType === "insertReplacementText"`)时 `preventDefault` 并插入直引号 / 连字符原文;散文区放行。此法区域感知、不动全局、不伤散文,优于 app 级 `NSUserDefaults` 关闭(后者伤散文,否决)。
+
+**验收待用户手动执行(WKWebView)**:代码块误拼不纠正 / 无红线;`"hello"` / `--flag` 保持直引号双连字符(智能引号项);math 区 `\frac` `\alpha` 不纠正;散文纠正照旧;进出编辑多次属性稳定;iPadOS 软键盘代码编辑时不显纠正条。
+
 ---
 
 ## 附录:Open Questions 裁决记录

@@ -2951,6 +2951,23 @@
     return root;
   }
 
+  // Disable system text processing (spellcheck / autocorrect / smart quotes &
+  // dashes / autocapitalize) on code + math editing regions — these mangle
+  // identifiers and LaTeX macros (the confirmed #3 autocorrect corruption).
+  // Prose is never touched. Applied to a <pre>/<code> (cascades to inner
+  // <code>) at creation, BEFORE the caret enters, so WebKit honours it on the
+  // editing region. See PHASE_3_5_EDITMODE.md §11.13.
+  function disableTextProcessing(el) {
+    if (!el || !el.setAttribute) return;
+    const set = (n) => {
+      n.setAttribute('spellcheck', 'false');
+      n.setAttribute('autocorrect', 'off');
+      n.setAttribute('autocapitalize', 'off');
+    };
+    set(el);
+    if (el.querySelectorAll) el.querySelectorAll('code').forEach(set);
+  }
+
   const MarkdownSerializer = {
     serialize(el) {
       let md = '';
@@ -3258,6 +3275,7 @@
         }
         code.textContent = '\n';
         pre.appendChild(code);
+        disableTextProcessing(pre);   // §11.13: code fence, before caret enters
         block.parentNode.replaceChild(pre, block);
         if (hasRenderer) EditMode._editingFence = pre;
         this.editor.ensureEdgeGaps();
@@ -3282,6 +3300,7 @@
         code.className = 'inkwell-live-fence';
         code.textContent = '$$\n\n$$';
         pre.appendChild(code);
+        disableTextProcessing(pre);   // §11.13: math fence, before caret enters
         block.parentNode.replaceChild(pre, block);
         EditMode._editingFence = pre;
         this.editor.ensureEdgeGaps();
@@ -3461,6 +3480,7 @@
         converted = this.tryConvertInline(textNode, /`([^`]+?)`/, (match, content) => {
           const el = document.createElement('code');
           el.textContent = content;
+          disableTextProcessing(el);   // §11.13: inline code span
           return el;
         });
         if (converted) break;
@@ -5213,6 +5233,7 @@
           const code = document.createElement('code');
           code.textContent = '\n';
           pre.appendChild(code);
+          disableTextProcessing(pre);   // §11.13
           if (block) block.parentNode.replaceChild(pre, block);
           else ed.element.appendChild(pre);
           this._setCursor(code, 0);
@@ -5266,6 +5287,7 @@
           code.className = 'inkwell-live-fence';
           code.textContent = '$$\n\n$$';
           pre.appendChild(code);
+          disableTextProcessing(pre);   // §11.13: math fence, before caret enters
           if (block) block.parentNode.replaceChild(pre, block);
           else ed.element.appendChild(pre);
           EditMode._editingFence = pre;
@@ -5486,6 +5508,7 @@
       if (lang) code.setAttribute('data-fence-language', lang);
       code.textContent = inner || '\n';
       pre.appendChild(code);
+      disableTextProcessing(pre);   // §11.13: before the caret enters the fence
 
       // Replace renderer root with editable fence
       if (!blockRoot.parentNode) return;
@@ -6408,6 +6431,9 @@
       });
       // Phase 3 PR 2: 把占位符替换为真正的 BlockRenderer 产物
       this._resolvePendingRenderers();
+      // §11.13: no system text processing in code / math / inline-code (after
+      // resolve so renderer-fallback <pre>s are covered too). Prose untouched.
+      this.element.querySelectorAll('pre, code').forEach(disableTextProcessing);
       this.ensureEdgeGaps();
       this.highlightCodeBlocks();
       this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
@@ -6828,9 +6854,11 @@
         if (selectedText.length > 0) {
           const code = document.createElement('code');
           try { range.surroundContents(code); } catch(e) {}
+          disableTextProcessing(code);   // \u00A711.13: inline code span
         } else {
           const code = document.createElement('code');
           code.textContent = '\u200B';
+          disableTextProcessing(code);   // \u00A711.13: inline code span
           range.insertNode(code);
           const r = document.createRange(); r.selectNodeContents(code); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
         }
@@ -6851,6 +6879,7 @@
       const code = document.createElement('code');
       code.textContent = block ? block.textContent || '\n' : '\n';
       pre.appendChild(code);
+      disableTextProcessing(pre);   // §11.13
       if (block && block !== this.element) block.parentNode.replaceChild(pre, block);
       else this.element.appendChild(pre);
       const range = document.createRange(); range.selectNodeContents(code); range.collapse(false);
