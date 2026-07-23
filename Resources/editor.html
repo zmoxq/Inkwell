@@ -3937,7 +3937,7 @@
         this._placeCaret(prev, next);
       }
 
-      UndoStack.markDiscrete();     // block deletion = one atomic undo step
+      UndoStack.recordDiscrete();   // block deletion = one atomic undo step (§11.2)
       this.editor.onContentChange();
     },
 
@@ -5280,7 +5280,7 @@
           break;
         }
       }
-      UndoStack.markDiscrete();   // slash-menu insert = one atomic undo step (§11.2)
+      UndoStack.recordDiscrete();   // slash-menu insert = one atomic undo step (§11.2)
       ed.onContentChange();
     },
 
@@ -5653,107 +5653,140 @@
   const UndoStack = {
     editor: null,
     MAX_STEPS: 100,
-    MAX_BYTES: 32 * 1024 * 1024,   // §11.4 byte budget
+    MAX_BYTES: 32 * 1024 * 1024,   // §11.4 byte budget (dehydrated-HTML total)
     IDLE_MS: 1000,                 // §11.3 idle break
 
-    _stack: [],        // [{ source, anchorBefore, anchorAfter, bytes }]
+    // Stack of committed states. Each snapshot is a DEHYDRATED DOM string
+    // (§11 revision, 2026-07-22): #editor.innerHTML with attached UI stripped
+    // and rendered blocks collapsed to parser-style placeholders (no SVG), so
+    // editing state that markdown cannot represent — empty paragraphs, editing
+    // fences — survives undo. Disk save is unchanged (getMarkdown → clean
+    // markdown). Snapshots NEVER touch disk. Committed lazily (at group
+    // boundaries), so a heavy dehydrate runs per word/pause, not per keystroke.
+    _stack: [],        // [{ html, anchorBefore, anchorAfter, bytes }]
     _idx: -1,          // current committed state; entries after _idx are redo
     _bytes: 0,
-    _groupOpen: false, // an in-progress coalescing group lives at _stack[_idx]
+    _dirty: false,     // uncommitted edits ahead of _stack[_idx] (open group)
+    _groupBefore: null,// caret at the start of the current open group
     _lastEditAt: 0,
-    _lastPostCaret: null,  // caret after the last recorded edit (jump detection)
-    _preEditCaret: null,   // caret captured before the imminent mutation
+    _lastPostCaret: null,
+    _preEditCaret: null,
+    _idleTimer: null,
     _composing: false,
-    _breakNext: false,     // force a new group on the next edit
+    _breakNext: false,
     _pendingDiscrete: false,
-    _restoring: false,     // suppress recording while undo/redo rebuilds DOM
+    _restoring: false,
 
     init(editor) {
       this.editor = editor;
       const el = editor.element;
+      // Pre-mutation caret (keydown fires before the edit; reliable across
+      // input paths). Enter is a newline break.
+      el.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        this._preEditCaret = this._anchor();
+        if (e.key === 'Enter') this._breakNext = true;
+      });
       el.addEventListener('beforeinput', (e) => {
         if (this._composing) return;
-        this._preEditCaret = this._anchor();
+        if (!this._preEditCaret) this._preEditCaret = this._anchor();
         const t = e.inputType || '';
-        // Paste and one-shot format commands are discrete single steps (§11.2).
         if (t === 'insertFromPaste' || t === 'insertFromDrop' ||
             t.indexOf('format') === 0 || t === 'insertUnorderedList' ||
             t === 'insertOrderedList' || t === 'insertHorizontalRule') {
           this._pendingDiscrete = true;
         }
       });
-      // IME: one composition = one step; never split mid-composition (§11.4).
-      el.addEventListener('compositionstart', () => { this._composing = true; });
+      // Record on real content edits. `input` fires for typing / delete / Enter
+      // / paste / execCommand; enter/leave-edit render swaps are direct-DOM
+      // with NO input, so they never record — §11.2 view-only guarantee, free.
+      el.addEventListener('input', () => { if (!this._composing) this._onEdit(); });
+      el.addEventListener('compositionstart', () => {
+        if (this._dirty) this._commit();      // composition is its own step
+        this._composing = true;
+      });
       el.addEventListener('compositionend', () => {
         this._composing = false;
-        this._record(false);      // fold the whole composition into one group
-        this._breakNext = true;   // next edit starts fresh
-      });
-      // keydown fires before the mutation, so it is the reliable capture point
-      // for a new group's anchorBefore (beforeinput does not fire for every
-      // input path, e.g. programmatic execCommand). Navigation keys also set it
-      // harmlessly — it is only consumed when a group actually opens.
-      el.addEventListener('keydown', (e) => {
-        if (e.isComposing) return;
-        this._preEditCaret = this._anchor();
-        // Enter = newline break condition (§11.3): close the group after it.
-        if (e.key === 'Enter') this._breakNext = true;
+        this._onEdit();                        // whole composition = one edit
+        this._breakNext = true;
       });
     },
 
-    // Seed with the loaded document as base state. A fresh document is a fresh
-    // history, so this resets. Called from loadMarkdown and empty-doc init.
+    // Seed with the current document as base state (a fresh document is a fresh
+    // history). Called from loadMarkdown and empty-doc init.
     reset() {
-      const src = this.editor.lastContent || '';
-      this._stack = [{ source: src, anchorBefore: null, anchorAfter: this._anchor(), bytes: src.length }];
-      this._idx = 0;
-      this._bytes = src.length;
-      this._groupOpen = false;
-      this._lastPostCaret = null;
-      this._breakNext = false;
-      this._pendingDiscrete = false;
+      this._clearIdle();
+      const html = this._dehydrate();
+      this._stack = [{ html, anchorBefore: null, anchorAfter: this._anchor(), bytes: html.length }];
+      this._idx = 0; this._bytes = html.length;
+      this._dirty = false; this._groupBefore = null; this._lastPostCaret = null;
+      this._breakNext = false; this._pendingDiscrete = false; this._preEditCaret = null;
       this._pushState();
     },
 
-    // Called from onContentChange AFTER lastContent changed (source-changing
-    // edits only — view-only transitions don't reach here, §11.2).
-    onEdit() {
-      if (this._restoring || this._composing) return;
-      this._record(this._pendingDiscrete);
+    // Programmatic single-step op with no input event (slash insert, block
+    // delete). Call AFTER the DOM change: commits any open group, then commits
+    // this op as its own step.
+    recordDiscrete() {
+      if (this._restoring) return;
+      if (this._dirty) this._commit();
+      this._groupBefore = this._preEditCaret ||
+        (this._stack[this._idx] ? this._stack[this._idx].anchorAfter : null);
+      this._lastPostCaret = this._anchor();
+      this._dirty = true;
+      this._commit();
+      this._breakNext = true;
+      this._preEditCaret = null;
     },
 
-    markDiscrete() { this._pendingDiscrete = true; },   // programmatic single-step ops
-
-    _record(discrete) {
-      const src = this.editor.lastContent;
+    _onEdit() {
+      if (this._restoring) return;
       const now = Date.now();
-      const post = this._anchor();
-      const idle = this._groupOpen && (now - this._lastEditAt > this.IDLE_MS);
-      const jump = this._groupOpen && this._lastPostCaret &&
-                   !this._contiguous(this._lastPostCaret, this._preEditCaret || post);
-      const openNew = !this._groupOpen || discrete || this._breakNext || idle || jump;
-
-      if (openNew) {
-        if (this._idx < this._stack.length - 1) {          // drop redo branch
-          for (let k = this._idx + 1; k < this._stack.length; k++) this._bytes -= this._stack[k].bytes;
-          this._stack.length = this._idx + 1;
-        }
-        const cur = this._stack[this._idx];
-        const before = this._preEditCaret || (cur ? cur.anchorAfter : null);
-        this._stack.push({ source: src, anchorBefore: before, anchorAfter: post, bytes: src.length });
-        this._bytes += src.length;
-        this._idx = this._stack.length - 1;
-        this._groupOpen = !discrete;      // discrete ops close immediately
-      } else {
-        const e = this._stack[this._idx];  // coalesce into the current group
-        this._bytes += src.length - e.bytes;
-        e.source = src; e.bytes = src.length; e.anchorAfter = post;
+      const pre = this._preEditCaret;
+      if (!this._dirty) {                  // this edit opens a new group
+        this._groupBefore = pre ||
+          (this._stack[this._idx] ? this._stack[this._idx].anchorAfter : null);
+        this._dirty = true;
+        this._pushState();                 // enable menu once per group, not per key
       }
-      this._breakNext = false;
+      // This edit coalesces into the (now open) group.
+      const discrete = this._pendingDiscrete;
+      const breakAfter = this._breakNext;  // newline (Enter): finish the group AFTER it
       this._pendingDiscrete = false;
+      this._breakNext = false;
       this._lastEditAt = now;
-      this._lastPostCaret = post;
+      this._lastPostCaret = this._anchor();
       this._preEditCaret = null;
+      // Commit at the group boundary. paste/format are their own step; Enter
+      // finishes the current line's group (it is part of it). Idle and cursor-
+      // jump commit via the idle timer / onSelectionChange — BEFORE the next
+      // edit — so a snapshot never mixes in the next group's first keystroke.
+      if (discrete || breakAfter) this._commit();
+      else this._scheduleIdle();
+    },
+
+    _scheduleIdle() {
+      this._clearIdle();
+      this._idleTimer = setTimeout(() => {
+        if (this._dirty && !this._composing) this._commit();
+      }, this.IDLE_MS);
+    },
+    _clearIdle() { if (this._idleTimer) { clearTimeout(this._idleTimer); this._idleTimer = null; } },
+
+    _commit() {
+      if (!this._dirty) return;
+      this._clearIdle();
+      if (this._idx < this._stack.length - 1) {        // drop redo branch
+        for (let k = this._idx + 1; k < this._stack.length; k++) this._bytes -= this._stack[k].bytes;
+        this._stack.length = this._idx + 1;
+      }
+      const html = this._dehydrate();
+      const entry = { html, anchorBefore: this._groupBefore,
+                      anchorAfter: this._lastPostCaret || this._anchor(), bytes: html.length };
+      this._stack.push(entry);
+      this._bytes += entry.bytes;
+      this._idx = this._stack.length - 1;
+      this._dirty = false; this._groupBefore = null;
       this._evict();
       this._pushState();
     },
@@ -5767,42 +5800,78 @@
       if (this._idx < 0) this._idx = 0;
     },
 
-    canUndo() { return this._idx > 0; },
-    canRedo() { return this._idx < this._stack.length - 1; },
+    canUndo() { return this._dirty || this._idx > 0; },
+    canRedo() { return !this._dirty && this._idx < this._stack.length - 1; },
 
     undo() {
-      if (!this.canUndo()) return;
-      const caret = this._stack[this._idx].anchorBefore;   // §11.5 anchorBefore
+      this._clearIdle();
+      if (this._dirty) this._commit();     // close open group so it stays redoable
+      if (this._idx <= 0) return;
+      const caret = this._stack[this._idx].anchorBefore;
       this._idx--;
-      this._groupOpen = false;
-      this._apply(this._stack[this._idx].source, caret);
+      this._apply(this._stack[this._idx].html, caret);
     },
-
     redo() {
-      if (!this.canRedo()) return;
+      this._clearIdle();
+      if (this._dirty || this._idx >= this._stack.length - 1) return;
       const target = this._stack[this._idx + 1];
       this._idx++;
-      this._groupOpen = false;
-      this._apply(target.source, target.anchorAfter);      // §11.5 anchorAfter
+      this._apply(target.html, target.anchorAfter);
     },
 
-    _apply(source, anchor) {
+    _apply(html, anchor) {
       this._restoring = true;
-      try {
-        this.editor.restoreSource(source);   // re-parse/render, no recording
-        this._restoreAnchor(anchor);
-      } finally { this._restoring = false; }
-      this._lastPostCaret = anchor;
+      try { this.editor.restoreDehydrated(html); this._restoreAnchor(anchor); }
+      finally { this._restoring = false; }
+      this._lastPostCaret = anchor; this._dirty = false; this._groupBefore = null;
       this._pushState();
     },
 
     _pushState() {
-      // Push canUndo/canRedo on stack change only (record/undo/redo/reset) —
-      // not per keystroke (§11.8). Drives Swift Edit-menu enablement.
       this.editor.postMessage('undoState', { canUndo: this.canUndo(), canRedo: this.canRedo() });
     },
 
-    // ---- Logical anchor { blockIndex, charOffset, inEditingFence } (§11.6) ----
+    // ---- Dehydrated DOM snapshot (§11 revision) ----
+
+    _dehydrate() {
+      const clone = this.editor.element.cloneNode(true);
+      clone.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+      clone.querySelectorAll('.inkwell-block-renderer').forEach(root => {
+        const ph = this._rootToPlaceholder(root);
+        if (ph) root.parentNode.replaceChild(ph, root);
+      });
+      return clone.innerHTML;
+    },
+
+    // Rendered block → parser-style placeholder (isomorphic to appendix C.2
+    // output), so restore reuses _resolvePendingRenderers with no new render
+    // logic. fenced-code roots carry the FULL fence in data-source-b64 but the
+    // placeholder wants inner content + language; display-math / image-group
+    // store the full source already.
+    _rootToPlaceholder(root) {
+      if (typeof ExtensionRegistry === 'undefined') return null;
+      const name = root.getAttribute('data-renderer') || '';
+      const spec = ExtensionRegistry._findRendererByName(name);
+      const blockType = spec ? spec.type : 'fenced-code';
+      let source = '';
+      try { source = decodeURIComponent(escape(atob(root.getAttribute('data-source-b64') || ''))); } catch (e) {}
+      let lang = root.getAttribute('data-language') || '', pending = source;
+      if (blockType === 'fenced-code') {
+        const m = source.match(/^```([^\n]*)\n([\s\S]*?)\n?```$/);
+        if (m) { lang = m[1].trim(); pending = m[2]; }
+      }
+      const ph = document.createElement('div');
+      ph.className = 'inkwell-pending-renderer';
+      ph.setAttribute('data-pending-block-type', blockType);
+      ph.setAttribute('data-pending-renderer', name);
+      ph.setAttribute('data-pending-language', lang);
+      ph.setAttribute('data-pending-source-b64', btoa(unescape(encodeURIComponent(pending))));
+      return ph;
+    },
+
+    // ---- Logical anchor { blockIndex, charOffset } (§11.6) ----
+    // No inEditingFence field: editing fences survive in the dehydrated
+    // snapshot as real <pre> nodes, so the caret locates inside them naturally.
 
     _anchor() {
       const sel = window.getSelection();
@@ -5819,34 +5888,30 @@
       if (!block) return null;
       return {
         blockIndex: Array.prototype.indexOf.call(el.children, block),
-        charOffset: this._charOffset(block, range.startContainer, range.startOffset),
-        inEditingFence: block.tagName === 'PRE' && !!block.querySelector('code.inkwell-live-fence')
+        charOffset: this._charOffset(block, range.startContainer, range.startOffset)
       };
     },
 
+    // Characters before (container, offset) within block, EXCLUDING attached-UI
+    // subtrees (drag handle etc.) so it matches _locateChar's walk exactly.
     _charOffset(block, container, offset) {
-      try {
-        const r = document.createRange();
-        r.selectNodeContents(block);
-        r.setEnd(container, offset);
-        return r.toString().length;
-      } catch (e) { return 0; }
+      const range = document.createRange();
+      try { range.setStart(block, 0); range.setEnd(container, offset); } catch (e) { return 0; }
+      const frag = range.cloneContents();
+      frag.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+      return frag.textContent.length;
     },
 
     _restoreAnchor(anchor) {
       if (!anchor) return;
       const el = this.editor.element;
-      let block = el.children[anchor.blockIndex] || el.lastElementChild;
+      const block = el.children[anchor.blockIndex] || el.lastElementChild;
       if (!block) return;
-      if (anchor.inEditingFence) {
-        try { EditMode.requestEnterEdit(block, { via: 'edit-button' }); } catch (e) {}
-        block = el.children[anchor.blockIndex] || block;   // fence <pre> may have replaced it
-      }
       const pos = this._locateChar(block, anchor.charOffset);
       try {
         const range = document.createRange();
-        if (pos) { range.setStart(pos.node, pos.offset); }
-        else { range.selectNodeContents(block); }
+        if (pos) range.setStart(pos.node, pos.offset);
+        else range.selectNodeContents(block);
         range.collapse(true);
         const sel = window.getSelection();
         sel.removeAllRanges();
@@ -5855,7 +5920,10 @@
     },
 
     _locateChar(block, target) {
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement && n.parentElement.closest('[data-inkwell-ui]'))
+          ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+      });
       let seen = 0, node, last = null;
       while ((node = walker.nextNode())) {
         const len = node.textContent.length;
@@ -5869,13 +5937,14 @@
       return !!a && !!b && a.blockIndex === b.blockIndex && Math.abs(a.charOffset - b.charOffset) <= 1;
     },
 
-    // Cursor-jump break (§11.3): if the caret moves non-contiguously while a
-    // group is open, close it so the next edit starts a new step.
+    // Cursor-jump break (§11.3): a non-contiguous caret move closes the group
+    // NOW (at the pre-jump DOM state), so the next edit opens a fresh group.
+    // Jumps are rare (clicks / cross-line arrows), so committing here is cheap.
     onSelectionChange() {
-      if (this._restoring || this._composing || !this._groupOpen) return;
+      if (this._restoring || this._composing || !this._dirty) return;
       const cur = this._anchor();
       if (cur && this._lastPostCaret && !this._contiguous(this._lastPostCaret, cur)) {
-        this._groupOpen = false;
+        this._commit();
       }
     }
   };
@@ -6294,9 +6363,6 @@
       const md = this.getMarkdown();
       if (md !== this.lastContent) {
         this.lastContent = md;
-        // Record an undo step (§11). Only source-changing edits reach here;
-        // view-only transitions serialize to the same md and are skipped.
-        UndoStack.onEdit();
         this.postMessage('contentChange', { content: md });
       }
       WordCount.update();
@@ -6311,32 +6377,43 @@
       UndoStack.reset();
     },
 
-    // Re-render `markdown` into the editor WITHOUT touching undo history.
-    // Used by UndoStack.undo/redo to restore a source snapshot (§11.5). The
-    // caller wraps this in _restoring so no edit is recorded.
-    restoreSource(markdown) {
-      this._loadInto(markdown);
+    // Restore a DEHYDRATED DOM snapshot WITHOUT touching undo history (§11).
+    // Used by UndoStack.undo/redo. The snapshot already holds parser-style
+    // placeholders + real structure (empty paragraphs, editing fences), so we
+    // set innerHTML directly and rehydrate — no markdown re-parse (which would
+    // normalise empty paragraphs away). Caller wraps this in _restoring.
+    restoreDehydrated(html) {
+      this.element.innerHTML = html;
+      this._hydrateDOM();
+      // Re-link EditMode to a restored editing fence (preserved as a real
+      // <pre> in the snapshot); at most one is expected.
+      const fenceCode = this.element.querySelector('pre > code.inkwell-live-fence');
+      EditMode._editingFence = fenceCode ? fenceCode.parentNode : null;
+      // Sync the disk source-of-truth and notify Swift of the restored content.
+      this.lastContent = this.getMarkdown();
+      this.postMessage('contentChange', { content: this.lastContent });
     },
 
     _loadInto(markdown) {
       this.lastContent = markdown;
       this.element.innerHTML = MarkdownParser.parse(markdown);
+      this._hydrateDOM();
+    },
+
+    // Shared post-innerHTML setup for both the parser path (_loadInto) and the
+    // dehydrated-snapshot restore path (restoreDehydrated).
+    _hydrateDOM() {
       this.element.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         cb.addEventListener('change', () => this.onContentChange());
       });
-      // Phase 3 PR 2: 把 parser 输出的占位符替换为真正的 BlockRenderer 产物
+      // Phase 3 PR 2: 把占位符替换为真正的 BlockRenderer 产物
       this._resolvePendingRenderers();
       this.ensureEdgeGaps();
       this.highlightCodeBlocks();
-      // Set up table resize handles
       this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
-      // Initialize carousels
       CarouselManager.initAll(this.element);
-      // Set up foldable heading toggles
       FoldableHeadings.refresh();
-      // Set up drag handles
       DragSort.refresh();
-      // Initial word count
       WordCount.update();
     },
 

@@ -303,6 +303,39 @@ D1 原条目在"设计债汇总"中**保留并加退休批注**(取代原因 = �
 - **iPadOS 系统撤销手势**(三指划 / 摇动)走 `UIResponder.undoManager`,本次**不接**;这些手势不会触发自建栈,行为为 no-op(不误触原生栈——见 11.8 的"绝不回退原生"约束)。未来若接,需在 UIResponder 层桥接进自建栈。
 - 每键全量序列化对 mermaid 重文档的既有卡顿(11.7),与本次正交,未处理。
 
+### 11.12 设计修正:快照从 markdown 源码改为脱水 DOM(2026-07-22,交互验收后)
+
+**动机(实机验收暴露的缺口)**:原设计(11.1–11.6)以 **clean-markdown 源码**为快照。交互验收发现 markdown **无法表示编辑缓冲区状态**:
+
+- 空段落 `<p><br></p>` 序列化为空(`above<p><br></p>here` → `above\n\nhere`),re-parse 后消失 → undo 删除用户的空行、后续行上移(bug #1)。
+- 空行由回车产生却**不改 markdown** → 回车不产生 undo 步、undo 跳过它。
+- 上述使锚点 `blockIndex` 在 re-parse 后错位 → undo 后光标落到错误的块/位置(bug #4);落入空块时光标不可见(bug #2)。
+
+**两个轴(核心区分,写进契约)**:
+
+| 轴 | 权威 | 是否变 |
+|----|------|--------|
+| **磁盘源码权威** | `getMarkdown()` 输出干净标准 markdown,存盘 | **不变**(底线 1) |
+| **编辑缓冲区保真** | undo/redo 恢复的是编辑中的 DOM 状态(含空段落、编辑态 fence) | **新增**:由脱水 DOM 快照承载 |
+
+**新快照 = 脱水 DOM**(`_dehydrate`):`#editor.innerHTML`,其中 `[data-inkwell-ui]` 剥除、`.inkwell-block-renderer` 坍缩为**附录 C.2 的 parser 占位符**(`.inkwell-pending-renderer` + `data-pending-*`,无 SVG)。恢复(`restoreDehydrated`)= `innerHTML = snapshot` + **复用 `_resolvePendingRenderers()`**(不新写渲染逻辑)+ 既有 hydrate 尾。**快照永不落盘**;存盘仍走 `getMarkdown()`。fenced-code 根的 `data-source-b64` 是完整围栏,占位符需拆出内层 content + language(display-math / image-group 存全文,直接用)。
+
+**记录触发改为 `input` 事件**(不再是 `md !== lastContent`):`input` 覆盖打字/删除/回车/粘贴/execCommand;enter/leave-edit 的渲染替换是直改 DOM **无 `input`** → 天然不记步(§11.2 视图态保证,免特判);空行回车**有 `input`** → 现在能记步。slash 插入 / 块删除无 `input`,经 `recordDiscrete()` 显式记一步。
+
+**懒提交(性能)**:脱水含 clone,mermaid 重文档 clone 仍是瓶颈。故**只在组边界提交**(idle 定时器 / 光标跳转的 `selectionchange` / 回车 / 离散op),不每键脱水。边界提交在**下一次编辑之前**发生,快照绝不混入下一组的首个按键。
+
+**`inEditingFence` 字段移除(评估结论)**:编辑态 fence 在脱水快照里就是真实 `<pre>` 节点,restore 后 caret 靠 `blockIndex+charOffset` 自然落入;`restoreDehydrated` 顺带把 `EditMode._editingFence` 重新指向恢复出的 live fence。故锚点不再需要 `inEditingFence`,已删。
+
+**锚点排除 `[data-inkwell-ui]`**:`_charOffset` / `_locateChar` 均跳过 UI 子树(drag handle `⠿`),offset 为纯内容字符数,不再依赖"handle 两侧自抵消",消除 #4 的 off-by-one 隐患。`blockIndex` 钳制保留为永久防御。
+
+**性能实测(dehydrate,in-app Chromium,text/table 文档)**:1KB 0.1ms / 50KB 2.9ms / 200KB 13.5ms;快照体积(**无 SVG**)2.6KB / 124KB / 496KB。mermaid 重文档的 dehydrate 与 `getMarkdown` 同阶(clone 主导),故懒提交把它限制到每组一次。
+
+**字节预算(重算)**:脱水 HTML ≈ markdown 的 ~2.4×。**保持 32MB**:200KB 文档每快照 ~0.5MB → ~64 步(<100 步上限);典型文档(数 KB)100 步远未触及。超 100 步或 32MB 任一即丢最旧。
+
+**#3(`today`→`todya`)非本模型问题**:插桩在每个快照捕获点比对"存储源码 vs live DOM 真实文本",**逐键完全一致**,且 `today?` round-trip 逐字节稳定 → undo 恢复的内容忠实。`todya` 只能来自 live DOM 曾含此串,即 **macOS 文本替换(autocorrect / 联想)** 的中间态被 undo 忠实还原;Chromium 无法复现。换快照格式不涉及它。可选加固:把 `inputType === "insertReplacementText"` 折进前一步(待定)。
+
+**验收(harness 实测通过)**:#1 空行(含多个"上上空行")undo 后保留;#4 undo 后光标落回被保留的正确行;#2 空块 undo 后光标可见;回归——连续输入合并、enter/leave-edit 零步、mermaid/katex/table/carousel 经 undo round-trip 干净(无 SVG 落盘)、redo、块删除单步,全部通过。**WKWebView 实机交互仍待用户验收**。
+
 ---
 
 ## 附录:Open Questions 裁决记录
