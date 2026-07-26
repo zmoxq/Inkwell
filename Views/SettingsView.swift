@@ -208,6 +208,11 @@ struct ThemeCard: View {
 struct GeneralSettingsView: View {
     @AppStorage("editorFontSize") private var fontSize: Double = 17
     @AppStorage("editorLineHeight") private var lineHeight: Double = 1.75
+    // NOT wired to any timer yet. Disk writes currently happen on Cmd+S, tab
+    // close/rename, and lifecycle flushes (scenePhase / app quit / tab switch).
+    // These two prefs — and any values already stored under these keys — are
+    // retained for a future timed-autosave implementation; their Settings UI
+    // (Toggle + interval Slider) is hidden until that lands.
     @AppStorage("autoSave") private var autoSave: Bool = true
     @AppStorage("autoSaveInterval") private var autoSaveInterval: Double = 5
     
@@ -236,24 +241,6 @@ struct GeneralSettingsView: View {
                     Text(String(format: "%.2f", lineHeight))
                         .monospacedDigit()
                         .frame(width: 40)
-                }
-            }
-            
-            Section("Auto Save") {
-                Toggle("Enable auto-save", isOn: $autoSave)
-                
-                if autoSave {
-                    HStack {
-                        Text("Save every")
-                        Spacer()
-                        Slider(value: $autoSaveInterval, in: 1...30, step: 1) {
-                            Text("Interval")
-                        }
-                        .frame(width: 150)
-                        Text("\(Int(autoSaveInterval))s")
-                            .monospacedDigit()
-                            .frame(width: 40)
-                    }
                 }
             }
         }
