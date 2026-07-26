@@ -79,6 +79,22 @@ class AppState: ObservableObject {
         // Restore saved zoom level
         let savedZoom = UserDefaults.standard.integer(forKey: "editorZoomLevel")
         self.zoomLevel = savedZoom > 0 ? savedZoom : 100
+
+        #if os(macOS)
+        // App-quit flush (macOS): scenePhase does not reliably reach .background
+        // before termination, so hook willTerminate explicitly to write out any
+        // dirty tabs. Silent — no "save changes?" prompt this round. iOS relies
+        // on the scenePhase .background flush instead (kill-from-background gives
+        // no further callback, so .background is the last chance). App-lifetime
+        // singleton, so the observer is intentionally never removed.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.flushDirtyDocuments()
+        }
+        #endif
     }
     
     // MARK: - File Tree (hierarchical)
@@ -270,6 +286,40 @@ class AppState: ObservableObject {
             doc.isDirty = false
         } catch {
             print("[Inkwell] Error saving file: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Source-of-truth flush (lifecycle hooks)
+    //
+    // Disk writes used to be bound to Cmd+S / tab close / rename only, so
+    // in-memory edits could outlive the app without ever reaching disk (the
+    // memory↔disk inconsistency window had no upper bound). These flush entry
+    // points close that gap for scenePhase changes, app termination and tab
+    // switches. Each is gated on `isDirty`; because the tab stays open, a
+    // successful write resets `isDirty` so an unchanged tab never incurs a
+    // redundant write on the next flush.
+
+    /// Flush every open document that has unsaved changes. Called from lifecycle
+    /// hooks (scenePhase background/inactive, app termination).
+    func flushDirtyDocuments() {
+        for doc in openTabs where doc.isDirty {
+            flush(doc)
+        }
+    }
+
+    /// Flush a single open document by id, if dirty. Called when switching away
+    /// from a tab (flushes the outgoing tab).
+    func flushDocument(id: UUID) {
+        guard let doc = openTabs.first(where: { $0.id == id }), doc.isDirty else { return }
+        flush(doc)
+    }
+
+    private func flush(_ doc: MarkdownDocument) {
+        do {
+            try NoteFileOperations.saveNote(content: doc.content, to: doc.url)
+            doc.isDirty = false
+        } catch {
+            print("[Inkwell] Error flushing \(doc.url.lastPathComponent): \(error.localizedDescription)")
         }
     }
     

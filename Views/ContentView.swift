@@ -72,6 +72,11 @@ struct ContentView: View {
             // it can be restored when the user returns to that tab.
             if let old = oldId {
                 coordinators[old]?.snapshotSelection()
+                // Source-of-truth flush of the OUTGOING tab. Its content is
+                // already mirrored into the document by the contentChange bridge
+                // on every input, so this writes that in-memory content to disk
+                // (no-op when the tab has no unsaved changes).
+                appState.flushDocument(id: old)
             }
             // Move keyboard focus to the newly active editor so typing routes
             // there (focus() also restores that editor's snapshotted caret).
