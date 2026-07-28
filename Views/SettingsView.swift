@@ -276,7 +276,7 @@ struct InkwellCommands: Commands {
                 panel.canChooseFiles = false
                 panel.begin { response in
                     if response == .OK, let url = panel.url {
-                        appState.workingDirectory = url
+                        appState.openLibrary(pickedURL: url)
                     }
                 }
             }

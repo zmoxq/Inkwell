@@ -301,14 +301,17 @@ struct ContentView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.begin { response in
+        panel.begin { [appState] response in
             if response == .OK, let url = panel.url {
-                appState.workingDirectory = url
+                appState.openLibrary(pickedURL: url)
             }
         }
         #else
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        appState.workingDirectory = documentsURL
+        // PHASE_5A §二: pick any local folder and persist it via a
+        // security-scoped bookmark (was: hard-coded to the sandbox Documents).
+        FolderPickerPresenter.present { [appState] url in
+            appState.openLibrary(pickedURL: url)
+        }
         #endif
     }
     
