@@ -76,3 +76,13 @@
 3. **feat**:bookmark 持久化 + iOS 文件夹选择器 + 启动恢复 + `isStale` 自愈 + 失败重选。iOS + macOS 双端验证。
 
 > 编/存已可用(save-flush 于 2026-07-26 落地,commit `8c185ea` / `888a0b2`;编辑本就可用),故 5A 的实质增量集中在 KI-1 与 bookmark 两块。
+
+## 四、实施记录(Implementation Log)
+
+> 实施与设计不符、或踩到的坑,如实记录于此。差异本身有价值。
+
+### KI-1(2026-07-28,commit `4a81637`)
+
+- **`columnVisibility` 只管 regular,compact 要用 `preferredCompactColumn`**。最初按设计写 `columnVisibility = .detailOnly` 想在 compact 下翻到编辑器——**实测无效,仍停在侧栏**。根因:`NavigationSplitView` 在 compact 宽度下只显示一列,由 **`preferredCompactColumn`** 绑定决定显示哪列;`columnVisibility` **仅作用于 regular 宽度**。改用 `preferredCompactColumn = .detail` 后生效,返回侧栏由系统自带的返回按钮(‹)完成。**这是个会重复踩的坑**——Phase 5 重设计 iOS 侧栏导航时必然再次相关,记此备忘。
+- **hook 从 `selectedFile` 移到 `activeTabId`(覆盖面的实质改进,非单纯位置调整)**。最初挂在 `ContentView` 的 `selectedFile` onChange,只覆盖"点已有文件"。但侧栏底部 "+" 新建走 `appState.createNewFile → openFile`(设 `activeTabId`),**不经过 `selectedFile`**——那样在 compact 下新建文件不翻页。改挂 `activeTabId` onChange(点已有文件与新建最终都改 `activeTabId`),一次覆盖两条打开路径。
+- **验证**:iPhone 17 / iOS 26.4(compact)——点已有文件翻页 ✅、"+"新建翻页 ✅、系统返回按钮回列表 ✅。regular 宽度不受影响(`preferredCompactColumn` 按 API 只作用 compact;macOS 编译+运行正常)。iPad 窗口化模拟器出现启动黑屏未能取得干净截图,单独记为 `KNOWN_ISSUES.md` KI-3(未定性)。
