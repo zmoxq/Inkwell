@@ -86,3 +86,10 @@
 - **`columnVisibility` 只管 regular,compact 要用 `preferredCompactColumn`**。最初按设计写 `columnVisibility = .detailOnly` 想在 compact 下翻到编辑器——**实测无效,仍停在侧栏**。根因:`NavigationSplitView` 在 compact 宽度下只显示一列,由 **`preferredCompactColumn`** 绑定决定显示哪列;`columnVisibility` **仅作用于 regular 宽度**。改用 `preferredCompactColumn = .detail` 后生效,返回侧栏由系统自带的返回按钮(‹)完成。**这是个会重复踩的坑**——Phase 5 重设计 iOS 侧栏导航时必然再次相关,记此备忘。
 - **hook 从 `selectedFile` 移到 `activeTabId`(覆盖面的实质改进,非单纯位置调整)**。最初挂在 `ContentView` 的 `selectedFile` onChange,只覆盖"点已有文件"。但侧栏底部 "+" 新建走 `appState.createNewFile → openFile`(设 `activeTabId`),**不经过 `selectedFile`**——那样在 compact 下新建文件不翻页。改挂 `activeTabId` onChange(点已有文件与新建最终都改 `activeTabId`),一次覆盖两条打开路径。
 - **验证**:iPhone 17 / iOS 26.4(compact)——点已有文件翻页 ✅、"+"新建翻页 ✅、系统返回按钮回列表 ✅。regular 宽度不受影响(`preferredCompactColumn` 按 API 只作用 compact;macOS 编译+运行正常)。iPad 窗口化模拟器出现启动黑屏未能取得干净截图,单独记为 `KNOWN_ISSUES.md` KI-3(未定性)。
+
+### bookmark 持久化(2026-07-28,commit `c5e9651`)
+
+- **失败不删 bookmark**。解析/access 失败时只设 `libraryReopenError` + 引导重选,**不删除**已存的 bookmark——临时不可用的目录(如未挂载的外部卷)可在后续启动自愈;用户重选会自然覆盖。删除会把"临时不可用"误判成"永久失效"。
+- **`activateLibrary` 取独立的会话级 access**,与 `openLibrary` 里"仅为创建 bookmark 的临时 access"分开(临时的用 `defer` 立即释放)。这样点已有文件/新建/切库都经同一配对路径,`startAccessing`/`stopAccessing` 严格 1:1。
+- **iOS 端到端验证**:iPhone 17 / iOS 26.4——选中沙盒外 File Provider Storage、在其中新建+编辑文件落盘、`libraryBookmark` 入 UserDefaults(1172B)、杀掉重开**自动恢复**上次目录与文件(未点 Open Folder)、恢复后打开文件读到内容。全绿。
+- **macOS 待办**:共用逻辑 + 编译通过,但 `NSOpenPanel` → 退出 → 重开的**运行期恢复未在本环境验证**(无法自动化 NSOpenPanel/退出/重开)。留待真机 spot-check:选一个 `~/` 下的文件夹、退出、重开,应自动恢复。
