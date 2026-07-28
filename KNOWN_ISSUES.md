@@ -8,8 +8,8 @@
 
 - **发现日期**:2026-07-26
 - **平台**:iOS,仅 **iPhone(compact width)**;iPad / macOS(regular width)不受影响
-- **状态**:已确认;本轮不修(与「保存 flush」任务无关);留待 **iOS 适配阶段**统一设计
-- **归属**:预存在问题,非本轮 save-flush 改动引入
+- **状态**:Phase 5A 以**方案 A(过渡)**最小修复(见 `PHASE_5A_IOS_ENABLEMENT.md` §一);**正规导航形态留待 Phase 5 iOS 外壳设计重新评估**
+- **归属**:预存在问题,非 save-flush 改动引入
 
 ### 现象
 
@@ -36,9 +36,15 @@ iPhone 上侧栏文件列表可见,点击某个 `.md` 文件后仍停留在侧�
 
 排查时**不要**误判为 `openFile` / `selectedFile` / 文件读取链路故障。该链路在 iPad / macOS(regular 宽度、双列同屏)上验证正常。
 
-### 候选方案(不预先选定,留 iOS 适配阶段一并设计)
+### 本轮处理(Phase 5A · 过渡方案 A)
 
-- **方案 A**:打开文件时把 `columnVisibility` 切到 `.detailOnly`(compact 下即翻到编辑器),并设计返回侧栏的路径。
+Phase 5A 采用**方案 A**:compact 宽度下打开文件时把 `columnVisibility` 切到 `.detailOnly`,把 detail 列翻到前台(`Views/ContentView.swift` 的 `selectedFile` onChange)。
+
+**这是 stage 1 的最小可用修法,不是最终形态。** 侧栏导航的正规形态(是否改用 `NavigationSplitView` 管理的 `List(selection:)`,让系统在 compact 下自动 push/pop)留待 **Phase 5 iOS 外壳设计**一并决定、届时重新评估。看到 `columnVisibility` 那段操作时,勿误判为深思熟虑的最终设计。
+
+### 候选方案(最终形态,留 Phase 5 评估)
+
+- **方案 A(本轮已采用,过渡)**:打开文件时 `columnVisibility = .detailOnly`。最小,但返回侧栏依赖系统/现有 toggle。
 - **方案 B**:把侧栏改造成 `NavigationSplitView` 管理的 selection(`List(selection:)` 或等效),让系统在 compact 下自动 push/pop。
 
 两方案在 regular 宽度下的行为、返回手势、以及与现有自绘选中态(左侧 accent bar,`Views/SidebarView.swift:381-387`)的兼容度各有取舍,统一到 iOS 适配阶段评估,不在此预先决定。

@@ -5,6 +5,11 @@ struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedFile: FileItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    // KI-1 (transitional, Phase 5A): in compact width NavigationSplitView shows a
+    // single column chosen by preferredCompactColumn (NOT columnVisibility, which
+    // only governs regular width). Opening a file flips this to .detail so the
+    // editor pages over; back-to-list is the system-provided back button.
+    @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
 
     @StateObject private var formatState = EditorFormatState()
     @StateObject private var findReplaceState = FindReplaceState()
@@ -39,7 +44,7 @@ struct ContentView: View {
     }
     
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
             SidebarView(selectedFile: $selectedFile)
                 .environmentObject(appState)
         } detail: {
@@ -84,6 +89,21 @@ struct ContentView: View {
             // before makeFirstResponder. Previous editor resigns automatically,
             // so hidden editors keep no first responder.
             guard let id = newId else { return }
+            // KI-1 — TRANSITIONAL (Phase 5A, method A). See
+            // PHASE_5A_IOS_ENABLEMENT.md §一 and KNOWN_ISSUES.md KI-1. In compact
+            // width NavigationSplitView shows one column at a time, and because
+            // the sidebar is a hand-drawn ScrollView + onTapGesture (not
+            // List(selection:)) the system does NOT auto-advance to the detail
+            // column when a document opens. So whenever a tab becomes active we
+            // page to .detail to reveal the editor — this covers both tapping an
+            // existing file (-> selectedFile -> openFile) and creating a new one
+            // (sidebar "+" -> createNewFile -> openFile), which both land on
+            // activeTabId. (preferredCompactColumn only affects compact; regular
+            // width ignores it and keeps both columns.) This is the stage-1
+            // minimal fix, NOT the final navigation form — whether to adopt a
+            // NavigationSplitView-managed List(selection:) is deferred to the
+            // Phase 5 iOS shell design.
+            preferredCompactColumn = .detail
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 coordinators[id]?.makeEditorFirstResponder()
             }
