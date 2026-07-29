@@ -81,11 +81,12 @@
 
 > 实施与设计不符、或踩到的坑,如实记录于此。差异本身有价值。
 
-### KI-1(2026-07-28,commit `4a81637`)
+### KI-1(2026-07-28,commits `4a81637` + `7a519c8`)
 
 - **`columnVisibility` 只管 regular,compact 要用 `preferredCompactColumn`**。最初按设计写 `columnVisibility = .detailOnly` 想在 compact 下翻到编辑器——**实测无效,仍停在侧栏**。根因:`NavigationSplitView` 在 compact 宽度下只显示一列,由 **`preferredCompactColumn`** 绑定决定显示哪列;`columnVisibility` **仅作用于 regular 宽度**。改用 `preferredCompactColumn = .detail` 后生效,返回侧栏由系统自带的返回按钮(‹)完成。**这是个会重复踩的坑**——Phase 5 重设计 iOS 侧栏导航时必然再次相关,记此备忘。
 - **hook 从 `selectedFile` 移到 `activeTabId`(覆盖面的实质改进,非单纯位置调整)**。最初挂在 `ContentView` 的 `selectedFile` onChange,只覆盖"点已有文件"。但侧栏底部 "+" 新建走 `appState.createNewFile → openFile`(设 `activeTabId`),**不经过 `selectedFile`**——那样在 compact 下新建文件不翻页。改挂 `activeTabId` onChange(点已有文件与新建最终都改 `activeTabId`),一次覆盖两条打开路径。
-- **验证**:iPhone 17 / iOS 26.4(compact)——点已有文件翻页 ✅、"+"新建翻页 ✅、系统返回按钮回列表 ✅。regular 宽度不受影响(`preferredCompactColumn` 按 API 只作用 compact;macOS 编译+运行正常)。iPad 窗口化模拟器出现启动黑屏未能取得干净截图,单独记为 `KNOWN_ISSUES.md` KI-3(未定性)。
+- **`FileItem` 只按 `url` 判等 → 再点同一文件不触发任何 onChange(第二次修复,`7a519c8`)**。返回列表后再点**已打开的同一文件**打不开:根因是 `FileItem` 自定义了 `==`/`hash` **只比较 `url`**(`Models/DataModels.swift`),再点生成的新 `FileItem` 与旧的 url 相等即判等 → `selectedFile` 视作未变 → 其 onChange 不触发(`openFile` 也不被调),而 `activeTabId` 因文件已是 active tab 也不变 → 两个已有 hook 全都不跑。console 实证:row tap 触发了,但后续无 `selectedFile`/`preferredCompactColumn` 变化。修法:AppState 加单调 `editorRevealTick`,在**行 tap 手势**里自增(绕过 url-equality),ContentView 观察它翻页。**教训:凡"点击已选中项要有反应"的场景,别依赖 `selectedFile`/自定义 url-Equatable 的值变化;要用每次交互都变的信号。Phase 5 重设计侧栏(尤其若改用 `List(selection:)`)必然再撞这个语义。**
+- **验证**:iPhone 17 / iOS 26.4(compact)——点已有文件翻页 ✅、"+"新建翻页 ✅、系统返回按钮回列表 ✅、**返回后再点同一文件翻页 ✅(连测两轮)**。regular 宽度不受影响(`preferredCompactColumn` 按 API 只作用 compact;macOS 编译+运行正常)。iPad 窗口化模拟器出现启动黑屏未能取得干净截图,单独记为 `KNOWN_ISSUES.md` KI-3(未定性)。
 
 ### bookmark 持久化(2026-07-28,commit `c5e9651`)
 

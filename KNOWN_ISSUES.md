@@ -36,11 +36,13 @@ iPhone 上侧栏文件列表可见,点击某个 `.md` 文件后仍停留在侧�
 
 排查时**不要**误判为 `openFile` / `selectedFile` / 文件读取链路故障。该链路在 iPad / macOS(regular 宽度、双列同屏)上验证正常。
 
-### 本轮处理(Phase 5A · 过渡方案 A)
+### 本轮处理(Phase 5A · 过渡方案 A,commits `4a81637` + `7a519c8`)
 
-Phase 5A 采用**方案 A**:compact 宽度下打开文件时把 `columnVisibility` 切到 `.detailOnly`,把 detail 列翻到前台(`Views/ContentView.swift` 的 `selectedFile` onChange)。
+Phase 5A 采用**方案 A**:compact 宽度下文件被打开/点击时,把 `NavigationSplitView` 的 **`preferredCompactColumn`** 切到 `.detail`,把编辑器列翻到前台(返回列表用系统自带返回按钮)。触发信号有二——`activeTabId` 变化(新建 / 切 tab)+ 每次行 tap 的单调 `editorRevealTick`(覆盖"返回后再点已打开的同一文件":`FileItem` 只按 url 判等,再点不改 `selectedFile`、也不改 `activeTabId`,故需独立的 per-tap 信号)。见 `Views/ContentView.swift`、`Views/SidebarView.swift`。
 
-**这是 stage 1 的最小可用修法,不是最终形态。** 侧栏导航的正规形态(是否改用 `NavigationSplitView` 管理的 `List(selection:)`,让系统在 compact 下自动 push/pop)留待 **Phase 5 iOS 外壳设计**一并决定、届时重新评估。看到 `columnVisibility` 那段操作时,勿误判为深思熟虑的最终设计。
+> 实现踩到的两个坑(详见 `PHASE_5A_IOS_ENABLEMENT.md` §四):① `columnVisibility` 只管 regular,compact 必须用 `preferredCompactColumn`;② 别依赖 url-Equatable 的 `selectedFile` 变化来驱动"点击有反应"。
+
+**这是 stage 1 的最小可用修法,不是最终形态。** 侧栏导航的正规形态(是否改用 `NavigationSplitView` 管理的 `List(selection:)`,让系统在 compact 下自动 push/pop)留待 **Phase 5 iOS 外壳设计**一并决定、届时重新评估。看到 `preferredCompactColumn` / `editorRevealTick` 那几段时,勿误判为深思熟虑的最终设计。
 
 ### 候选方案(最终形态,留 Phase 5 评估)
 
