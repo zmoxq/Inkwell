@@ -21,6 +21,13 @@ class AppState: ObservableObject {
     
     /// Set by sidebar outline tap, consumed by editor view to scroll
     @Published var scrollToOutline: OutlineItem? = nil
+
+    /// KI-1 (transitional, PHASE_5A §一): bumped on every file-row tap so
+    /// ContentView can page to the editor in compact width — even when the
+    /// tapped file is ALREADY the active tab. FileItem is Equatable by url, so
+    /// re-tapping the same file does not change `selectedFile` and its onChange
+    /// never fires; a monotonic tick is the reliable per-tap signal.
+    @Published var editorRevealTick: Int = 0
     
     /// The currently active document (computed from activeTabId)
     var currentDocument: MarkdownDocument? {

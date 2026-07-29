@@ -59,6 +59,14 @@ struct ContentView: View {
                 openFileAndLoadContent(file.url)
             }
         }
+        .onChange(of: appState.editorRevealTick) { _, _ in
+            // KI-1 (transitional): a file row was tapped — page to the editor in
+            // compact width. Driven by a per-tap tick, NOT selectedFile (url-
+            // equatable, so re-tapping the active file doesn't change it) nor
+            // activeTabId (unchanged when re-tapping the active tab). Ignored in
+            // regular width. See PHASE_5A §一 / KNOWN_ISSUES KI-1.
+            preferredCompactColumn = .detail
+        }
         .onChange(of: appState.isSidebarVisible) { _, visible in
             columnVisibility = visible ? .all : .detailOnly
         }

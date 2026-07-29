@@ -376,6 +376,7 @@ struct SidebarView: View {
 // MARK: - Typora File Row (recursive tree node)
 
 struct TyporaFileRow: View {
+    @EnvironmentObject var appState: AppState
     @ObservedObject var node: FileNode
     @Binding var selectedFile: FileItem?
     let accentColor: Color
@@ -447,6 +448,12 @@ struct TyporaFileRow: View {
                         isDirectory: false,
                         modificationDate: node.modificationDate
                     )
+                    // KI-1 (transitional): signal a file-row tap so ContentView
+                    // pages to the editor in compact width — even when this file
+                    // is already the active tab. FileItem is url-equatable, so
+                    // re-tapping it wouldn't otherwise change selectedFile or fire
+                    // any onChange. See PHASE_5A §一 / KNOWN_ISSUES KI-1.
+                    appState.editorRevealTick &+= 1
                 }
             }
             .contextMenu {
