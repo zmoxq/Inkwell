@@ -1,8 +1,8 @@
 # Inkwell Phase 3 — 扩展架构
 
 > **Status**: PR 1、PR 2 已完成。当前活跃扩展：`highlight-code`、`highlight-mark`、`mermaid`。
-> **Document Version**: 2.1 — 增补 §3.4 UI 装饰排除契约(`data-inkwell-ui`)
-> **Last Updated**: 2026-07-20
+> **Document Version**: 2.2 — §十三 路线图同步至实施现实(PR 3 / PR 4' 完成,Phase 3 收尾)
+> **Last Updated**: 2026-08-18
 > **适用范围**: Inkwell macOS/iOS WYSIWYG Markdown 编辑器,editor.html 内的扩展机制
 
 ---
@@ -392,7 +392,7 @@ Renderer 作者不需要关心主题切换或选区保护——core 统一处理
 
 **风险**:如果未来 KaTeX、Three.js 等扩展也有主题相关的全局状态,要么各自硬编码进 `_notifyRerender`(累积多了就会乱),要么抽出一个 hook 让 renderer 声明 `onTriggerGlobal(trigger, isDark)`。
 
-**处理时机**:PR 3 KaTeX 实施时若发现同类需求,就是抽象这个 hook 的时机。在那之前不要预先抽象。
+**处理时机**:PR 3 KaTeX 实施时未出现同类需求,故该 hook 至今未抽象。未来若有新扩展需要主题相关全局状态,再行抽象——在那之前不要预先抽象。
 
 ---
 
@@ -680,26 +680,16 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 - **PR 1**:ExtensionRegistry + BlockRenderer/BlockDecorator/InlineRenderer 三类骨架 + 迁移 highlight.js (→ `highlight-code`) + 迁移 `==text==` (→ `highlight-mark`)
 - **PR 2**:Mermaid 接入,确认架构在异步渲染、错误语义、主题响应、AbortSignal 防竞态全部场景下成立;附带产出 WebAssets 资产层
+- **PR 3**:KaTeX Display Math (`$$...$$`) 接入,注册 `math-block` 块类型(非 fenced-code,含 parser 适配),KaTeX 库经 WebAssets 层本地化引入;验证同步渲染的 renderer 同样适配 BlockRenderer 契约(产出 `data-source-b64` 包裹)
+- **PR 4'**:Stock Chart 本地数据版接入,`stock` fenced block 读取同名子文件夹内的 CSV/JSON,经 `readLocalFile` 通道 + `InkwellFileReadResolver` 路径解析(含路径穿越与同级前缀攻击防护);lightweight-charts 经 WebAssets 层引入。网络数据能力不在此范围,仍属 PR 6。遗留问题见 `KNOWN_ISSUES.md` KI-4
 
-### 下一步
+至此 Phase 3 扩展架构收尾。四类扩展(异步渲染 / 同步渲染 / 装饰器 / 行内替换)与本地数据读取路径均已跑通,ExtensionRegistry 契约经四个 PR 验证成立。后续开发方向见 `INKWELL_ROADMAP.md`。
 
-**PR 3 — KaTeX Display Math (`$$...$$`)**
+### 后续(均为 future scope,无排期)
 
-- 复用 PR 2 验证过的异步渲染模式(BlockRenderer + runAsync)
-- 注册新 block 类型 `math-block`(不是 fenced-code,需要 parser 适配)
-- KaTeX 库通过 WebAssets 层引入(`inkwell-asset:///katex.min.js`)
-- 实施前提醒:
-  1. **不要预先抽象 renderer 全局状态 hook**——等 KaTeX 真的需要时再抽(见第六节"已知设计债")
-  2. 占位符路径已通用,KaTeX display math 直接套(见第五节)
-  3. WebAssets 已就位,KaTeX 库丢进 `WebAssets/` 即可(见第十节)
-  4. InlineRegistry v1 不能做 KaTeX inline——这条限制不要破例
-  5. KaTeX 渲染本身是同步的,但仍要走 BlockRenderer 接口(产生 `data-source-b64` 包裹)
-
-### 后续
-
-- **PR 4 — Timeline**:` ```timeline ` fenced block,纯 SVG 自绘,验证"完全本地无网络"扩展形态
-- **PR 5 — Inline Parser v2**(future scope):当 KaTeX inline / 复杂 mention / 自定义 directive 需要 parser-aware 扩展点时启动,需独立设计议题
-- **PR 6 — Stock Chart / 网络数据扩展**(future scope):新增 `capabilities.network`、`refresh`、`cache`,可能此时拆出独立的 `EmbedRenderer` 类型
+- **PR 4 — Timeline**:` ```timeline ` fenced block,纯 SVG 自绘。状态未定——其原始目的是验证"完全本地无网络"扩展形态,该目的已由 PR 4' 达成;是否仍作为独立功能推进待定
+- **PR 5 — Inline Parser v2**:当 KaTeX inline / 复杂 mention / 自定义 directive 需要 parser-aware 扩展点时启动,需独立设计议题
+- **PR 6 — 网络数据扩展**:在 PR 4' 本地数据版基础上新增 `capabilities.network`、`refresh`、`cache`,定义离线 fallback 与缓存策略,可能此时拆出独立的 `EmbedRenderer` 类型
 
 ### 明确不做(Phase 3 范围外)
 
@@ -711,7 +701,7 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 - ❌ 扩展依赖管理 / 版本检查
 - ❌ 扩展热重载
 
-这些都是"插件平台"特征。Inkwell 是本地编辑器,不是插件平台。**接口为它们留了位置但不为它们工作**。
+这些都是"插件平台"特征。Inkwell 是本地编辑器,不是插件平台。接口为它们留了位置但不为它们工作。
 
 ---
 
@@ -765,4 +755,4 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 ---
 
-*Document version: 2.1 — 增补 UI 装饰排除契约(`data-inkwell-ui`,§3.4);v2.0 整合实施现实,删除过期路线图细节*
+*Document version: 2.2 — §十三 路线图同步至实施现实(PR 3 / PR 4' 完成,Phase 3 收尾);2.1 增补 UI 装饰排除契约(`data-inkwell-ui`,§3.4)*

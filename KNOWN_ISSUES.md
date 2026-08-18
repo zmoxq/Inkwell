@@ -113,3 +113,55 @@ scenePhase flush 逻辑本身**正确**(锁屏 / 切全屏 app 场景已验证�
 ### 待办(下次复现时采集,不主动排查)
 
 窗口尺寸与是否 compact、黑屏区域是否 WKWebView、`scenePhase` 时序、控制台 / WebContent 进程日志。
+
+---
+
+## KI-4 · Stock chart 时间轴日期标签在 Inkwell 内不可见
+
+- **发现日期**:2026-05-13(PR 4' / D3 阶段)
+- **平台**:Inkwell WKWebView(编辑器渲染态),对照 Safari(CDN 加载 lightweight-charts)显示正常
+- **状态**:未解决,已接受为 caveat
+- **归属**:WKWebView / contentEditable 渲染环境,非数据格式或 lightweight-charts 库缺陷
+
+### 影响
+
+`stock-chart` 块底部时间轴不显示日期文字。K 线、volume、MA、十字光标 hover 时的具体日期均正常——缺的只有 X 轴静态标签。
+
+### 现象
+
+同一份图表配置与数据:
+
+- 在 Safari 中打开对照 HTML(CDN 加载 lightweight-charts)→ 日期标签正常显示
+- 在 Inkwell 的 WKWebView 内 → 日期标签不可见
+
+对照实验用三个 case(TradingView 官方配置 300px / Inkwell 配置 400px / 同配置 440px),Safari 下三个 case 全部显示日期标签。
+
+### 已排除的可能性
+
+| 假设 | 排除依据 |
+|---|---|
+| 数据格式问题(ISO 日期字符串) | Safari 对照实验中同数据正常显示 |
+| lightweight-charts 库本身缺陷 | 官方默认配置在 Safari 下正常 |
+| 容器高度不足 | 试过 +30 / +35 / +40 / +60 offset,均无效 |
+| autoSize 与显式 width/height 冲突 | 移除冲突项后仍不显示 |
+| volume series 的 priceScaleId 配置 | 改为独立 pane / overlay 均无变化 |
+
+### 已知诊断证据
+
+Canvas 位置诊断显示:**time-scale 的 canvas 渲染在宿主容器边界下方约 19px 处**,被 `stock-chart-note` 元素覆盖。所有 console 指标(canvas 尺寸、timeScale visible 状态、textColor)都显示"应该能显示",但视觉上不可见。
+
+### 未尝试的五个方向
+
+1. **iframe 隔离** — 把 chart 放进 iframe,脱离 contentEditable 宿主的 CSS 与布局上下文
+2. **contentEditable 宿主环境 quirks** — 排查 contenteditable 容器对内部 canvas 定位/裁剪的影响(注:Inkwell 无第三方编辑器框架,是自写实现)
+3. **WKWebView 与 Safari 的渲染差异** — 定位两者在 canvas 合成层上的具体分歧
+4. **inspect lightweight-charts 源码** — 找 time scale canvas 的定位计算逻辑
+5. **手动绘制时间轴** — 放弃库的 time scale,自绘 X 轴标签
+
+### 当前处理方式
+
+接受为已知 caveat。图表仍传达约 90% 的复盘价值——价格形态、成交量、均线均可读,hover 十字光标可读出精确日期。X 轴静态标签属 nice-to-have。
+
+### 已确认的反模式
+
+**不要再用 `config.height + N` 的 fudge factor 修这个问题。** 该做法在不同 DPR、字体设置、iOS/macOS 之间不稳定,是架构层面不成立的解法。
