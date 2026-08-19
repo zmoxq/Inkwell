@@ -6,3 +6,13 @@
 *.xcuserstate
 xcuserdata/
 **/xcuserdata/
+
+# Manual test scratch under tests/
+tests/**/*.json
+tests/**/*.png
+tests/**/*.jpg
+tests/**/*.jpeg
+tests/Untitled*.md
+
+# WKWebView image-loading temp file (generated, never tracked)
+.inkwell-editor.html
