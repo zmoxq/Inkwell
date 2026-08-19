@@ -1,8 +1,8 @@
 # Inkwell Phase 3 — 扩展架构
 
 > **Status**: PR 1、PR 2 已完成。当前活跃扩展：`highlight-code`、`highlight-mark`、`mermaid`。
-> **Document Version**: 2.0 — 现状描述版(整合 1.1 正文 + 附录 C 实施记录)
-> **Last Updated**: 2026-05-13
+> **Document Version**: 2.2 — §十三 路线图同步至实施现实(PR 3 / PR 4' 完成,Phase 3 收尾)
+> **Last Updated**: 2026-08-18
 > **适用范围**: Inkwell macOS/iOS WYSIWYG Markdown 编辑器,editor.html 内的扩展机制
 
 ---
@@ -156,6 +156,107 @@ ExtensionRegistry.registerInline({
 - 不感知 code span / escape / emphasis 上下文
 - KaTeX inline、复杂 mention 等需要 parser-aware 扩展点,**留待 InlineRegistry v2**(见路线图 PR 5)
 
+### 3.4 UI 装饰排除契约(`data-inkwell-ui`)
+
+DOM 中存在**非内容**元素:`renderer-edit-action` 按钮、loading 占位、错误 UI、DragSort 拖拽柄、标题折叠钮、carousel 导航控件等。它们必须活在 live DOM 里(供交互),但绝不能进入任何"内容出口"。此前它们不落盘靠两条兜底:BlockRenderer 的 `data-source-b64` 源码权威(serializer 读 b64,忽略渲染产物),以及 serializer/剪贴板/LiveConverter 各处**逐 class 枚举**跳过(`.inkwell-drag-handle` / `.inkwell-fold-toggle`)。前者覆盖不到源码权威之外的路径(Decorator 块、未来插入可编辑区域的 UI);后者每新增一种装饰物就要在每个出口补一处枚举,易漏。本契约用一个显式属性消除这类静默污染的可能性。
+
+**契约**:带 `data-inkwell-ui` 属性的元素**及其整个子树**,对以下三条"内容出口"不可见:
+
+| 路径 | 剥除方式 |
+|------|---------|
+| **Serializer** | 遍历前在**克隆副本**上剥除(`stripUIElements`),不动 live DOM |
+| **剪贴板(copy/cut)** | 写入 clipboard 前对选区克隆片段剥除(同一 `stripUIElements`) |
+| **LiveConverter** | 文本扫描/块识别(`getBlockSourceText`)入口处跳过带此属性的子树 |
+
+统一剥除函数(serializer 与剪贴板共用,各自传入自己的克隆):
+
+```javascript
+// 仅在脱离文档的克隆/片段上调用——原地移除,会破坏 live UI。
+function stripUIElements(root) {
+  root.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+  return root;
+}
+```
+
+LiveConverter 因其扫描机制不同,不做"克隆-剥除"而做"扫描-跳过"(遍历子节点时按同一属性略过)。三条路径共享的是**同一组被排除元素**(`[data-inkwell-ui]`),而非同一遍历策略。
+
+**边界**:
+
+- `data-inkwell-ui` 标记的是"**附加** UI 元素",**不用于"被装饰的内容本身"**。hljs 着色 span **不带**此属性——Decorator 产物的源码本就在 core 渲染的 `<code>` textContent 里,走既有 `<pre><code>` 文本提取路径序列化。渲染产物(mermaid SVG、stockchart 标题/画布、carousel 的图片幻灯)同理属"内容/渲染",**不打标**;只有其上的**附加控件**(edit-button、loading/error 占位、carousel 箭头/圆点/计数器)才打标。find/replace 的 `.inkwell-find-highlight` 也不打标:它包裹的是用户内容,序列化时**解包保留 inner**,而非整体剥除。
+- 与 `contenteditable="false"` **正交**:前者管**序列化可见性**,后者管**编辑可达性**。UI 装饰元素通常两者都带,但二者独立——一个元素可以 CE=false 却参与序列化(被装饰内容),也可以带 `data-inkwell-ui` 而由祖先继承 CE=false(如 renderer root 内的 edit-button)。
+
+**设计债(如实记录)**:serializer 现每次 `getMarkdown()`(每次内容变更即调)克隆整棵 `#editor`(含渲染产物 SVG/canvas)后剥除。典型文档成本可忽略(cloneNode 为原生实现,数千节点亚毫秒级);极端大文档(多张复杂 mermaid)若每键一次深克隆成瓶颈,回退方向:serializer 改为 live 遍历 + `serializeNode` 内行内跳过 `[data-inkwell-ui]`(放弃与剪贴板的**函数**共享,保留**属性**共享)。
+
+> 本契约兑现了 `PHASE_3_5_EDITMODE.md` 附录设计债 **D2**("第二种注入 contentEditable DOM 的 UI 装饰物出现时,应升级为统一 `data-inkwell-ui` 属性过滤")。逐 class 枚举的既有跳过点(keydown/beforeinput 删除守卫、slash 菜单块文本、导出路径)不在本次"内容出口"范围内,保留原样;drag-handle/fold-toggle 现同时带 class 与属性,两套过滤并存无冲突。
+
+### 3.5 块级删除机制(`BlockDeletion`)
+
+结构化块(表格、carousel,未来 mermaid/stockchart 等)需要一个统一的"删除整块"操作。目标是**一处实现删除行为,块类型只声明是否提供入口**,而不是每种块各写一个删除按钮各管一套 undo。
+
+**核心行为(core 统一实现)**:`BlockDeletion.deleteBlock(blockEl)`,`blockEl` 必须是 `#editor` 的**顶层子节点**(表格 = `<table>`;carousel = `.inkwell-block-renderer` root)。三步:
+
+1. **原子删除**(见下"undo 契约")
+2. **光标落点**:落到**前一个块的末尾**;无前块则后一个块开头;两者都无(唯一块)则由 `ensureEdgeGaps()` 新建 `<p><br></p>` 并落入。理由:删块类比"退格合并",光标停在已存在的可编辑正文里最不突兀;前块末尾一定是合法 caret 位,而相邻块可能又是 CE=false 渲染块(无 caret 位),故优先前块。删除后**显式设 selection**——设 selection 不进 undo 栈,不破坏原子性。
+3. **唯一块保护**:删除后调既有 `ensureEdgeGaps()`,空文档自动补 `<p><br></p>` 并聚焦,文档始终可输入。
+
+#### undo 契约:为什么必须走 `execCommand`(本节是后续 undo 边界设计的输入)
+
+`PHASE_3_5_EDITMODE.md` OQ1/D1 已裁决:**不引入自管 undo,完全依赖浏览器原生 contentEditable 撤销栈**;裸 DOM 改动(`removeChild`/`replaceChild`)**不进原生撤销栈**,故 enter/leave-edit 是"不可撤销边界"。这直接约束了删除的实现:
+
+- ❌ `blockEl.remove()` / `replaceChild` —— Cmd+Z **完全无效**,违反"单一原子 undo 步"要求。
+- ✅ **把删除动作走原生编辑管线**——整块 `selectNode` 后一次 `execCommand('delete')`:
+
+```javascript
+const range = document.createRange();
+range.selectNode(blockEl);            // 整块作为一个单元选中
+sel.removeAllRanges(); sel.addRange(range);
+document.execCommand('delete');       // 一次 execCommand = 一个 undo 单元
+```
+
+**原子性从何而来**:`execCommand` 是编辑器既有的 undo 集成路径(格式命令、cut handler L5801 均走它)。每次 `execCommand` 调用在原生撤销栈里登记**一个** undo 单元;WebKit 对被删片段做整体 DOM 快照,Cmd+Z 一次恢复整棵子树(表格全部单元格内容 / carousel 全部图片幻灯 + 控件),不拆成多步。光标落点是删除**之后**的独立 selection 操作,不产生第二个 undo 单元。
+
+**与既有删除守卫的关系**:`beforeinput` 守卫(L5529)只在**部分切入**受保护块(`startP`/`endP` 落在 `<pre>`/renderer 内且有残留)时 `preventDefault`。整块 `selectNode` 时删除边界落在 `#editor` 层,`startP`/`endP` 均为 `null`,守卫不拦截,块被干净整体删除。`execCommand` 不触发 keydown,keydown 守卫天然无关。
+
+> **正式先例**:自本节起,"要原子可撤销 → 必须过 `execCommand`;裸 DOM 改动一律是不可撤销边界"成为 Inkwell 的 undo 边界规则。D1 的边界清单据此扩展(见 `PHASE_3_5_EDITMODE.md`)。
+
+#### 声明机制(块类型如何提供删除入口)
+
+| 块类型 | 出生方式 | 声明方式 |
+|--------|---------|---------|
+| carousel(image-group) | 注册的 BlockRenderer | spec 增字段 `deletable: true` |
+| table | core 原生 parser 产物(非 extension) | 无 spec,由 `TableManager` 直接接线 |
+
+**不对称如实记录**:`deletable` 只对注册的 BlockRenderer 有意义;table 是 core DOM,没有 spec 承载声明,故由其菜单持有者(TableManager)直接调 `BlockDeletion`。共享的是 **core 行为**(`deleteBlock` + 删除项工厂 `createMenuItem`),而非一套配置驱动的注册表——2 个用例不足以支撑通用注册表(YAGNI)。未来第 3 种块接入时若仍是 BlockRenderer,`deletable: true` 直接复用;若是又一种 core 原生块,同 table 直接接线。
+
+#### UI 契约
+
+- **入口形态**:删除项是**破坏性菜单项**,加入块的浮动块菜单;与其他项视觉区分(红色调),**不做二次确认弹窗**,依赖 undo 兜底。
+- **表格**:在既有 `.inkwell-table-toolbar` 尾部(分隔符后)追加"Delete Table"项。
+- **carousel**:carousel 此前**没有块菜单**(只有箭头/圆点/计数器导航件)。新建一条**浮动块工具条**(仿 `.inkwell-table-toolbar` pattern),选中/hover carousel 时浮出,含 Delete 项。此工具条为**通用 renderer 块菜单**雏形:凡 `data-renderer` 对应 spec `deletable: true` 的 root 即挂载。
+- **`data-inkwell-ui` 合规**:删除项及浮动菜单容器经 `createUIElement` / 打 `data-inkwell-ui` + `contenteditable="false"`,不进序列化/剪贴板(§3.4)。carousel 图片附件文件本身不受影响——删除只移除 DOM(即 .md 里的 `![]()` 引用),磁盘图片文件不动。
+
+#### 待交互验收的实现风险(WKWebView 实机,由用户在运行 app 中确认)
+
+| 风险 | 说明 | 兜底 |
+|------|------|------|
+| 相邻块合并 | `selectNode + execCommand('delete')` 删除夹在两段落间的块后,WebKit 是否把前后两段落误并成一段 | 若复现:改用 `execCommand('insertHTML', …)` 1:1 替换,或调整边界 |
+| 复杂子树 undo 恢复 | 表格多单元格 / carousel 多图 的 Cmd+Z 是否逐属性完整还原 | execCommand 快照理论覆盖;实机确认 |
+| 空文档 caret | 删唯一块后 WebKit 可能留 `<br>`/空 text,`ensureEdgeGaps` 的空判定需覆盖 | 实机确认后按需收紧空判定 |
+
+#### 明确不做(本次边界)
+
+- ❌ mermaid / stock chart / 代码块的删除接入(机制稳定后按需接;它们只需 `deletable: true` 或直接接线)
+- ❌ 删除的键盘快捷键
+- ❌ 二次确认弹窗
+- ❌ Phase 3.5 编辑状态机改动、serializer 源码权威逻辑改动
+
+#### 实施顺序(一个 commit)
+
+1. Core `BlockDeletion`:`deleteBlock` + `createMenuItem` + 破坏性菜单项 CSS
+2. TableManager:工具条尾部追加 Delete Table 项
+3. Carousel 浮动块菜单 + image-group spec `deletable: true`
+4. 回归(表格增删行列/排序、carousel 导航、find/replace、主题切换、round-trip)+ build + 交付交互验收清单
+
 ### 关于源码存储:为什么用 base64 attribute
 
 三种方案对比后的选择:
@@ -179,6 +280,7 @@ ExtensionRegistry.registerInline({
   // DOM 构造
   createBlockRoot({ renderer, sourceMarkdown, language, editStyle }),
   createElement(tag, attrs, ...children),
+  createUIElement(tag, attrs, ...children),   // 附加 UI 件:自动带 data-inkwell-ui + contenteditable="false"
 
   // 状态管理
   setLoading(rootEl, message),
@@ -220,6 +322,17 @@ context.runAsync(root, async (signal) => {
 - AbortSignal 透传给 renderer,避免快速切换主题等场景的竞态
 - 异常自动捕获,调用 onError,不污染主流程
 - **onError 必填**:强制 renderer 作者思考错误 UX,避免 core 用一套通用 fallback 误处理所有错误
+
+### `createUIElement`
+
+与 `createElement` 同签名,额外自动附加 `data-inkwell-ui`(序列化/剪贴板不可见,见 §3.4)与 `contenteditable="false"`(编辑不可达)。扩展作者用它创建"附加 UI 件"(按钮、提示、浮层控件),无需记住 §3.4 契约:
+
+```javascript
+const btn = context.createUIElement('button', { className: 'my-action' }, 'Reload');
+// → <button class="my-action" data-inkwell-ui contenteditable="false">Reload</button>
+```
+
+**约定**:core 内部创建的 UI 件(edit-button / loading / error 占位)直接加属性;**扩展内**创建的 UI 件一律走 `createUIElement`。内置 image-group(carousel)扩展的箭头/圆点/计数器是首个真实消费者。
 
 ---
 
@@ -279,7 +392,7 @@ Renderer 作者不需要关心主题切换或选区保护——core 统一处理
 
 **风险**:如果未来 KaTeX、Three.js 等扩展也有主题相关的全局状态,要么各自硬编码进 `_notifyRerender`(累积多了就会乱),要么抽出一个 hook 让 renderer 声明 `onTriggerGlobal(trigger, isDark)`。
 
-**处理时机**:PR 3 KaTeX 实施时若发现同类需求,就是抽象这个 hook 的时机。在那之前不要预先抽象。
+**处理时机**:PR 3 KaTeX 实施时未出现同类需求,故该 hook 至今未抽象。未来若有新扩展需要主题相关全局状态,再行抽象——在那之前不要预先抽象。
 
 ---
 
@@ -424,12 +537,33 @@ Phase 3 期间 highlight.js 的 **JS 本体与深浅两套主题 CSS 一直是 c
 | | 图片附件 | Mermaid/KaTeX 源码 |
 |---|---|---|
 | 性质 | 用户资产 | 渲染输入 |
-| 存储位置 | 磁盘文件(`attachments/`) | 永远在 .md 文件内(fenced block) |
-| Markdown 表示 | `![](attachments/foo.png)` | ` ```mermaid ... ``` ` |
-| DOM 表示 | `<img src="attachments/foo.png">` | `<div data-source-b64="..."><svg>...</svg></div>` |
+| 存储位置 | 磁盘文件(per-note `<basename>/` 文件夹) | 永远在 .md 文件内(fenced block) |
+| Markdown 表示 | `![](<basename>/foo-a1b2c3d4.png)` | ` ```mermaid ... ``` ` |
+| DOM 表示 | `<img src="<basename>/foo-a1b2c3d4.png">` | `<div data-source-b64="..."><svg>...</svg></div>` |
 | base64 涉及 | ❌ 不涉及 | ✅ DOM 内部临时形态 |
 
-**关键点**:base64 attribute 只是 DOM 内部状态,**保存到磁盘的 .md 文件里没有任何 base64**——磁盘上永远是干净的 fenced markdown。图片附件的现有处理逻辑保持原样,与扩展架构无关。
+**关键点**:base64 attribute 只是 DOM 内部状态,**保存到磁盘的 .md 文件里没有任何 base64**——磁盘上永远是干净的 fenced markdown。图片资产放在与笔记同级的 `<basename>/` 文件夹里(笔记 `foo.md` → `foo/`),markdown 用相对路径 `<basename>/<file>` 引用,解析基准是笔记所在目录(与下方 readLocalFile 读取边界同一目录)。
+
+### 图片附件写入:per-note 文件夹 + 共用写入逻辑(`InkwellAttachmentStore`)
+
+笔记 `<basename>.md` 的关联资产统一写入同级 `<basename>/` 文件夹。此**写入路径**的单一实现是 `Editor/InkwellAttachmentStore.swift`(Foundation-only、可单测,是读侧 `InkwellFileReadResolver` 的写侧姊妹)。两处调用者共享它,均不自己拼目录或起名:
+
+- `MarkdownDocument.saveAttachment`(model 层 API);
+- `EditorCoordinator` 的图片拷贝路径(carousel 与单图插入共用同一函数 `storePickedImage`)。
+
+> **背景更正(如实记录)**:本次接入前,`saveAttachment` 里已有 `<basename>/` 逻辑但**无人调用**,真正的图片拷贝路径(`sendImageURLToJS` / iOS picker)直接写到笔记所在目录并只引用裸文件名,污染笔记目录——这正是 Part 3 修的 bug。stock chart 并不写盘,它只经 `InkwellFileReadResolver` 按笔记目录**读** CSV;故"两边共用"实际收敛的是上面两个**写**入口,读侧另有其姊妹 resolver。carousel 与单图插入共用 `sendImageURLToJS`,同一根因同一修复,单图插入一并受益。
+
+**目录创建**:写入前 `ensureDirectory` 按需创建 `<basename>/`(已存在则复用,幂等)。
+
+**文件名冲突** → `<cleaned>-<shorthash>.<ext>`:
+
+- `cleaned`:保留 Unicode 字母/数字(中文、带音标名存活)+ `-`/`_`;空格、路径分隔符、文件系统/URL 敌意字符(`: ? * " < > | #` …)一律替换为 `-`;连续 `-` 折叠为一个;首尾 `-`/`_` 去除;截断到 40 字符;清理后为空则退化为 `image`。
+- `ext`:小写、仅字母数字、截断到 10 字符。
+- `shorthash`:内容 SHA-256 前 4 字节(8 位十六进制)。**内容寻址**:同名但**内容不同**的两个文件 → 哈希不同 → 落成两个文件;**同一份字节**插入两次 → 同名 → 复用既有文件(去重,两处引用指向同一文件)。
+
+**未保存笔记边界**:笔记无 URL/basename 时无法派生 `<basename>/`。当前架构下每个打开的文档都已有 URL(新建笔记在编辑前即以 `Untitled N.md` 落盘),故此路不可达;代码仍防御性守卫——`documentURL == nil` 时**不插入**图片并弹原生提示(macOS `NSAlert` / iOS `UIAlertController`),而非静默污染或静默失败。
+
+**删除语义**:删除 carousel 块(见 §3.5)**只移除 markdown 里的 `![]()` 引用,不删除磁盘图片文件**。理由:用户可能仅调整版式(删了重排),不应连带毁掉资产;由此产生的孤儿图片文件交由未来的"整理附件"命令处理(见 roadmap)。本次也**不迁移**已散落在笔记目录里的旧图片——同属整理命令范畴。
 
 ### readLocalFile 文件读取边界(D.15 修订版,2026-07-16)
 
@@ -516,18 +650,27 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 **测试网已补齐**:`tests/roundtrip/` + `InkwellTests/RoundTripTests` 是常驻交付物,经 `xcodebuild test` 运行,覆盖上述纯 round-trip 路径。交互编辑路径的自动化仍是缺口。
 
-### LiveConverter 实时切换未接入
+### LiveConverter → BlockRenderer 实时接入(Phase 3.5 起已打通;2026-07-21 复核更新)
 
-设计区分了两条渲染路径,实际只接通了一条:
+> **本节旧版**记录"LiveConverter 路径未接入 BlockRenderer,现场敲的块必须重载文件才渲染"。该状态已被 **Phase 3.5**(`PHASE_3_5_EDITMODE.md`,LiveConverter × EditMode 状态机,status 已完成)整体消除。此处更新为当前事实,旧描述作废。
+
+两条渲染路径现均接通,统一在 **cursor-leave** 触发渲染(与 Phase 3.5 决策 1 的统一触发点一致):
 
 | 路径 | 触发场景 | 是否走 BlockRenderer |
 |------|---------|------|
 | Parser 路径 | loadMarkdown / 冷启动加载 | ✅ 已接入 |
-| LiveConverter 路径 | 用户实时输入 ` ```mermaid ` | ❌ 仍生成原始 `<pre><code>` |
+| LiveConverter 路径 | 现场输入 → 光标离开块 | ✅ 经 EditMode leave-edit → BlockRenderer |
 
-**当前用户体验**:在编辑器里现场敲 mermaid 块,必须重新加载文件才能看到渲染产物。代码里加了 TODO 注释。
+**接入形态是通用的,不是某块特化**——凡注册了 BlockRenderer 的块类型,live-input 都在 cursor-leave 渲染:
 
-**为什么不解决**:实时切换涉及 typora-style edit-mode 的设计议题——光标进入 mermaid 块时显示什么(源码?渲染图?)、切换时机、UX 取舍,都不简单。是独立话题,留待未来专项处理。
+- **Fenced-code 类 renderer(mermaid、stock-chart)**:`LiveConverter.onEnter` 对 ` ```lang ` 且该 lang 有注册 renderer 时,产出带 `inkwell-live-fence` + `data-fence-language` 的编辑态 `<pre>` 并置 `EditMode._editingFence`;光标离开时 `_doLeaveEdit` 按 `{type:'fenced-code', language, content}` 派发到对应 renderer。
+- **Display-math(`$$`)**:`$$` 不是围栏,需与 ` ``` ` 并列的定界符规则——`onEnter` 对独占行 `$$` 产出 `data-block-type="display-math"` 的编辑态 fence(文本含双 `$$`),`_doLeaveEdit` 按 `{type:'display-math', content, raw}` 派发到 `katex-display` renderer。此规则由 `36aa394`(2026-07-16)补齐。
+
+**math block 三入口一致(2026-07-21)**:display math 的三条进入路径——冷加载(parser)、现场输入(LiveConverter)、`/` 菜单插入——现产出**同构**的编辑态 fence,离开时走同一个 `katex-display` renderer。此前 `/` 菜单插入的是错误的 `language-math` 普通代码块,已修正为与另两路一致的 `data-block-type="display-math"` 编辑态 fence。
+
+**round-trip 等价**:parser 的 `data-pending-source-b64 = base64(raw)`(`raw = $$\n…\n$$`,含双定界符);leave-edit 侧 `block.raw = codeEl.textContent`(编辑态文本本就含双定界符),renderer 取 `sourceMarkdown = block.raw`。故三路产出的 `data-source-b64` 逐字节相同,存盘 markdown 一致。
+
+**仍未接入**:inline `$...$`(InlineRegistry v1 明确不支持,留 PR5),不在本节范围。原"typora-style edit-mode 设计议题"已由 Phase 3.5 状态机解决(光标进入渲染块 → 就地切回源码编辑态;离开 → 重渲染)。
 
 ---
 
@@ -537,26 +680,16 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 - **PR 1**:ExtensionRegistry + BlockRenderer/BlockDecorator/InlineRenderer 三类骨架 + 迁移 highlight.js (→ `highlight-code`) + 迁移 `==text==` (→ `highlight-mark`)
 - **PR 2**:Mermaid 接入,确认架构在异步渲染、错误语义、主题响应、AbortSignal 防竞态全部场景下成立;附带产出 WebAssets 资产层
+- **PR 3**:KaTeX Display Math (`$$...$$`) 接入,注册 `math-block` 块类型(非 fenced-code,含 parser 适配),KaTeX 库经 WebAssets 层本地化引入;验证同步渲染的 renderer 同样适配 BlockRenderer 契约(产出 `data-source-b64` 包裹)
+- **PR 4'**:Stock Chart 本地数据版接入,`stock` fenced block 读取同名子文件夹内的 CSV/JSON,经 `readLocalFile` 通道 + `InkwellFileReadResolver` 路径解析(含路径穿越与同级前缀攻击防护);lightweight-charts 经 WebAssets 层引入。网络数据能力不在此范围,仍属 PR 6。遗留问题见 `KNOWN_ISSUES.md` KI-4
 
-### 下一步
+至此 Phase 3 扩展架构收尾。四类扩展(异步渲染 / 同步渲染 / 装饰器 / 行内替换)与本地数据读取路径均已跑通,ExtensionRegistry 契约经四个 PR 验证成立。后续开发方向见 `INKWELL_ROADMAP.md`。
 
-**PR 3 — KaTeX Display Math (`$$...$$`)**
+### 后续(均为 future scope,无排期)
 
-- 复用 PR 2 验证过的异步渲染模式(BlockRenderer + runAsync)
-- 注册新 block 类型 `math-block`(不是 fenced-code,需要 parser 适配)
-- KaTeX 库通过 WebAssets 层引入(`inkwell-asset:///katex.min.js`)
-- 实施前提醒:
-  1. **不要预先抽象 renderer 全局状态 hook**——等 KaTeX 真的需要时再抽(见第六节"已知设计债")
-  2. 占位符路径已通用,KaTeX display math 直接套(见第五节)
-  3. WebAssets 已就位,KaTeX 库丢进 `WebAssets/` 即可(见第十节)
-  4. InlineRegistry v1 不能做 KaTeX inline——这条限制不要破例
-  5. KaTeX 渲染本身是同步的,但仍要走 BlockRenderer 接口(产生 `data-source-b64` 包裹)
-
-### 后续
-
-- **PR 4 — Timeline**:` ```timeline ` fenced block,纯 SVG 自绘,验证"完全本地无网络"扩展形态
-- **PR 5 — Inline Parser v2**(future scope):当 KaTeX inline / 复杂 mention / 自定义 directive 需要 parser-aware 扩展点时启动,需独立设计议题
-- **PR 6 — Stock Chart / 网络数据扩展**(future scope):新增 `capabilities.network`、`refresh`、`cache`,可能此时拆出独立的 `EmbedRenderer` 类型
+- **PR 4 — Timeline**:` ```timeline ` fenced block,纯 SVG 自绘。状态未定——其原始目的是验证"完全本地无网络"扩展形态,该目的已由 PR 4' 达成;是否仍作为独立功能推进待定
+- **PR 5 — Inline Parser v2**:当 KaTeX inline / 复杂 mention / 自定义 directive 需要 parser-aware 扩展点时启动,需独立设计议题
+- **PR 6 — 网络数据扩展**:在 PR 4' 本地数据版基础上新增 `capabilities.network`、`refresh`、`cache`,定义离线 fallback 与缓存策略,可能此时拆出独立的 `EmbedRenderer` 类型
 
 ### 明确不做(Phase 3 范围外)
 
@@ -568,7 +701,7 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 - ❌ 扩展依赖管理 / 版本检查
 - ❌ 扩展热重载
 
-这些都是"插件平台"特征。Inkwell 是本地编辑器,不是插件平台。**接口为它们留了位置但不为它们工作**。
+这些都是"插件平台"特征。Inkwell 是本地编辑器,不是插件平台。接口为它们留了位置但不为它们工作。
 
 ---
 
@@ -587,6 +720,7 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 | 大型 JS 库管理 | 自定义 `inkwell-asset://` scheme + Bundle | 不污染用户目录;跟随 app 版本;零复制 IO |
 | readLocalFile 边界基准(2026-07-16 修订) | 笔记所在目录(见 §十一 D.15 修订版) | 初版 `<docname>/` 前缀在 rename 后必断且与图片通道不对称;目录基准下两通道同一边界,穿越防护强度不变 |
 | 围栏语言的权威来源(2026-07-16) | 作者声明的语言;hljs 的自动探测**仅供显示**,不得进入序列化 | 与「源码权威性」同源:探测结果一旦留在 DOM 的 `language-*` class 上,serializer 会把它当成用户写的语言存盘——无语言围栏存盘后变 ```ruby,即捏造源码 |
+| UI 装饰排除机制(2026-07-20) | `data-inkwell-ui` 属性 + 统一 `stripUIElements`(serializer/剪贴板)+ 扫描跳过(LiveConverter);见 §3.4 | 逐 class 枚举覆盖不到源码权威之外的路径(Decorator 块、未来可编辑区域 UI),且每新增装饰物需补多处;显式属性契约消除静默污染,兑现 3.5 设计债 D2 |
 
 ---
 
@@ -601,6 +735,8 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 - **AbortSignal**:浏览器原生 API,runAsync 内部使用以防止竞态
 - **safeCall**:包裹所有 renderer 方法调用的错误隔离层
 - **占位符路径**:parser 输出 `inkwell-pending-renderer` div,加载后由 `_resolvePendingRenderers()` 替换为真 DOM
+- **`data-inkwell-ui`**:标记"附加 UI 元素"的属性,其子树对 serializer / 剪贴板 / LiveConverter 三条内容出口不可见(§3.4)
+- **`stripUIElements`**:在克隆副本/选区片段上原地移除全部 `[data-inkwell-ui]` 子树的共享函数,serializer 与剪贴板共用
 
 ---
 
@@ -619,4 +755,4 @@ Step 3 的判定得到证实:标题吞并**就住在交互编辑路径**,纯 rou
 
 ---
 
-*Document version: 2.0 — 整合实施现实,删除过期路线图细节*
+*Document version: 2.2 — §十三 路线图同步至实施现实(PR 3 / PR 4' 完成,Phase 3 收尾);2.1 增补 UI 装饰排除契约(`data-inkwell-ui`,§3.4)*

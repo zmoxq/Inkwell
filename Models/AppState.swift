@@ -9,12 +9,25 @@ class AppState: ObservableObject {
     @Published var fileTree: [FileNode] = []
     @Published var currentThemeCSS: String = ""
     @Published var isEditorReady: Bool = false
+    // Undo/redo availability for the ACTIVE editor, pushed from JS on stack
+    // change (§11.8). Drives the Edit-menu item enabled state. Best-effort:
+    // the JS keydown handler is the real workhorse, so stale enablement never
+    // breaks undo — it only greys the menu item.
+    @Published var canUndo: Bool = false
+    @Published var canRedo: Bool = false
     @Published var isSidebarVisible: Bool = true
     @Published var sidebarMode: SidebarMode = .files
     @Published var outlineItems: [OutlineItem] = []
     
     /// Set by sidebar outline tap, consumed by editor view to scroll
     @Published var scrollToOutline: OutlineItem? = nil
+
+    /// KI-1 (transitional, PHASE_5A §一): bumped on every file-row tap so
+    /// ContentView can page to the editor in compact width — even when the
+    /// tapped file is ALREADY the active tab. FileItem is Equatable by url, so
+    /// re-tapping the same file does not change `selectedFile` and its onChange
+    /// never fires; a monotonic tick is the reliable per-tap signal.
+    @Published var editorRevealTick: Int = 0
     
     /// The currently active document (computed from activeTabId)
     var currentDocument: MarkdownDocument? {
@@ -39,6 +52,13 @@ class AppState: ObservableObject {
         allThemes.first { $0.id == currentThemeId }
     }
     
+    /// Non-nil when restoring the last library at launch failed (bookmark
+    /// unresolvable or access denied). Surfaced in the empty state as a distinct
+    /// message so a failed restore never silently looks like a plain empty
+    /// sidebar — which would be confusable with KI-1. Cleared on a successful
+    /// openLibrary. (PHASE_5A §二, constraint #1)
+    @Published var libraryReopenError: String? = nil
+
     @Published var workingDirectory: URL? {
         didSet {
             if let dir = workingDirectory {
@@ -62,7 +82,15 @@ class AppState: ObservableObject {
     }
     
     private var cancellables = Set<AnyCancellable>()
-    
+
+    // MARK: - Library security scope (PHASE_5A §二)
+    /// The single security-scoped URL currently being accessed (the open library
+    /// root). Exactly one is held at a time; switching libraries stops the
+    /// previous before starting the new — strict start/stop pairing, since an
+    /// unbalanced start leaks a sandbox extension (constraint #2).
+    private var accessedSecurityScopedURL: URL?
+    private static let libraryBookmarkKey = "libraryBookmark"
+
     init() {
         // Restore saved theme
         let savedId = UserDefaults.standard.string(forKey: "selectedThemeId") ?? "inkwell"
@@ -73,6 +101,30 @@ class AppState: ObservableObject {
         // Restore saved zoom level
         let savedZoom = UserDefaults.standard.integer(forKey: "editorZoomLevel")
         self.zoomLevel = savedZoom > 0 ? savedZoom : 100
+
+        #if os(macOS)
+        // App-quit flush (macOS): scenePhase does not reliably reach .background
+        // before termination, so hook willTerminate explicitly to write out any
+        // dirty tabs. Silent — no "save changes?" prompt this round. iOS relies
+        // on the scenePhase .background flush instead (kill-from-background gives
+        // no further callback, so .background is the last chance). App-lifetime
+        // singleton, so the observer is intentionally never removed.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.flushDirtyDocuments()
+            // Release the library security scope on quit (pairing tidy-up; the
+            // OS reclaims on exit regardless).
+            self?.accessedSecurityScopedURL?.stopAccessingSecurityScopedResource()
+        }
+        #endif
+
+        // Restore the last-opened library (security-scoped bookmark). Runs after
+        // the observer is registered; sets workingDirectory (whose didSet loads
+        // the tree) only once access is active. (PHASE_5A §二)
+        restoreLibrary()
     }
     
     // MARK: - File Tree (hierarchical)
@@ -265,6 +317,113 @@ class AppState: ObservableObject {
         } catch {
             print("[Inkwell] Error saving file: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Source-of-truth flush (lifecycle hooks)
+    //
+    // Disk writes used to be bound to Cmd+S / tab close / rename only, so
+    // in-memory edits could outlive the app without ever reaching disk (the
+    // memory↔disk inconsistency window had no upper bound). These flush entry
+    // points close that gap for scenePhase changes, app termination and tab
+    // switches. Each is gated on `isDirty`; because the tab stays open, a
+    // successful write resets `isDirty` so an unchanged tab never incurs a
+    // redundant write on the next flush.
+
+    /// Flush every open document that has unsaved changes. Called from lifecycle
+    /// hooks (scenePhase background/inactive, app termination).
+    func flushDirtyDocuments() {
+        for doc in openTabs where doc.isDirty {
+            flush(doc)
+        }
+    }
+
+    /// Flush a single open document by id, if dirty. Called when switching away
+    /// from a tab (flushes the outgoing tab).
+    func flushDocument(id: UUID) {
+        guard let doc = openTabs.first(where: { $0.id == id }), doc.isDirty else { return }
+        flush(doc)
+    }
+
+    private func flush(_ doc: MarkdownDocument) {
+        do {
+            try NoteFileOperations.saveNote(content: doc.content, to: doc.url)
+            doc.isDirty = false
+        } catch {
+            print("[Inkwell] Error flushing \(doc.url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Library (folder) open + bookmark persistence (PHASE_5A §二)
+
+    /// Open a user-picked folder as the library: persist a security-scoped
+    /// bookmark, take access, and set it as the working directory. Call sites:
+    /// macOS NSOpenPanel completions and the iOS FolderPickerPresenter callback.
+    func openLibrary(pickedURL: URL) {
+        // iOS picker URLs must be accessed before they can even be read to build
+        // a bookmark (harmless on macOS, where panel URLs return false). This
+        // access is only for bookmark creation and is released immediately; the
+        // session-long access is taken separately in activateLibrary.
+        let tempAccess = pickedURL.startAccessingSecurityScopedResource()
+        defer { if tempAccess { pickedURL.stopAccessingSecurityScopedResource() } }
+
+        do {
+            let data = try SecurityScopedBookmark.create(from: pickedURL)
+            UserDefaults.standard.set(data, forKey: Self.libraryBookmarkKey)
+        } catch {
+            // Persistence failed, but the folder still opens for this session.
+            print("[Inkwell] Could not persist library bookmark: \(error.localizedDescription)")
+        }
+
+        libraryReopenError = nil
+        activateLibrary(url: pickedURL)
+    }
+
+    /// Restore the last-opened library from its bookmark at launch. On failure
+    /// this does NOT silently leave an empty sidebar (which would be confusable
+    /// with KI-1) — it sets a distinct libraryReopenError guiding the user to
+    /// re-pick, and keeps the bookmark (a temporarily-unavailable folder can
+    /// recover on a later launch; re-picking overwrites it). (constraint #1)
+    private func restoreLibrary() {
+        guard let data = UserDefaults.standard.data(forKey: Self.libraryBookmarkKey) else { return }
+
+        let resolved: (url: URL, isStale: Bool)
+        do {
+            resolved = try SecurityScopedBookmark.resolve(data)
+        } catch {
+            libraryReopenError = "Couldn't reopen your last folder — it may have moved or been removed. Open a folder to continue."
+            return
+        }
+
+        guard resolved.url.startAccessingSecurityScopedResource() else {
+            libraryReopenError = "Couldn't reopen your last folder — access wasn't granted. Open a folder to continue."
+            return
+        }
+        accessedSecurityScopedURL = resolved.url
+
+        // isStale self-heal: regenerate + persist while access is active, rather
+        // than failing (constraint #1).
+        if resolved.isStale, let fresh = try? SecurityScopedBookmark.create(from: resolved.url) {
+            UserDefaults.standard.set(fresh, forKey: Self.libraryBookmarkKey)
+        }
+
+        workingDirectory = resolved.url  // didSet loads the tree (scope is active)
+    }
+
+    /// Take session-long security-scoped access to `url` and make it the working
+    /// directory. Strict pairing: releases the previously accessed URL first, so
+    /// at most one scope is held at a time (constraint #2). On macOS a
+    /// freshly-panel-granted URL returns false from startAccessing yet is still
+    /// usable this session via the panel grant, so we simply don't track it for
+    /// stopAccessing in that case.
+    private func activateLibrary(url: URL) {
+        if let prev = accessedSecurityScopedURL {
+            prev.stopAccessingSecurityScopedResource()
+            accessedSecurityScopedURL = nil
+        }
+        if url.startAccessingSecurityScopedResource() {
+            accessedSecurityScopedURL = url
+        }
+        workingDirectory = url
     }
     
     func createNewFile(in directory: URL, name: String = "Untitled.md") -> URL? {

@@ -5,6 +5,11 @@ struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedFile: FileItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    // KI-1 (transitional, Phase 5A): in compact width NavigationSplitView shows a
+    // single column chosen by preferredCompactColumn (NOT columnVisibility, which
+    // only governs regular width). Opening a file flips this to .detail so the
+    // editor pages over; back-to-list is the system-provided back button.
+    @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
 
     @StateObject private var formatState = EditorFormatState()
     @StateObject private var findReplaceState = FindReplaceState()
@@ -39,7 +44,7 @@ struct ContentView: View {
     }
     
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
             SidebarView(selectedFile: $selectedFile)
                 .environmentObject(appState)
         } detail: {
@@ -53,6 +58,14 @@ struct ContentView: View {
             if let file = newFile, !file.isDirectory {
                 openFileAndLoadContent(file.url)
             }
+        }
+        .onChange(of: appState.editorRevealTick) { _, _ in
+            // KI-1 (transitional): a file row was tapped — page to the editor in
+            // compact width. Driven by a per-tap tick, NOT selectedFile (url-
+            // equatable, so re-tapping the active file doesn't change it) nor
+            // activeTabId (unchanged when re-tapping the active tab). Ignored in
+            // regular width. See PHASE_5A §一 / KNOWN_ISSUES KI-1.
+            preferredCompactColumn = .detail
         }
         .onChange(of: appState.isSidebarVisible) { _, visible in
             columnVisibility = visible ? .all : .detailOnly
@@ -72,6 +85,11 @@ struct ContentView: View {
             // it can be restored when the user returns to that tab.
             if let old = oldId {
                 coordinators[old]?.snapshotSelection()
+                // Source-of-truth flush of the OUTGOING tab. Its content is
+                // already mirrored into the document by the contentChange bridge
+                // on every input, so this writes that in-memory content to disk
+                // (no-op when the tab has no unsaved changes).
+                appState.flushDocument(id: old)
             }
             // Move keyboard focus to the newly active editor so typing routes
             // there (focus() also restores that editor's snapshotted caret).
@@ -79,9 +97,33 @@ struct ContentView: View {
             // before makeFirstResponder. Previous editor resigns automatically,
             // so hidden editors keep no first responder.
             guard let id = newId else { return }
+            // KI-1 — TRANSITIONAL (Phase 5A, method A). See
+            // PHASE_5A_IOS_ENABLEMENT.md §一 and KNOWN_ISSUES.md KI-1. In compact
+            // width NavigationSplitView shows one column at a time, and because
+            // the sidebar is a hand-drawn ScrollView + onTapGesture (not
+            // List(selection:)) the system does NOT auto-advance to the detail
+            // column when a document opens. So whenever a tab becomes active we
+            // page to .detail to reveal the editor — this covers both tapping an
+            // existing file (-> selectedFile -> openFile) and creating a new one
+            // (sidebar "+" -> createNewFile -> openFile), which both land on
+            // activeTabId. (preferredCompactColumn only affects compact; regular
+            // width ignores it and keeps both columns.) This is the stage-1
+            // minimal fix, NOT the final navigation form — whether to adopt a
+            // NavigationSplitView-managed List(selection:) is deferred to the
+            // Phase 5 iOS shell design.
+            preferredCompactColumn = .detail
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 coordinators[id]?.makeEditorFirstResponder()
             }
+            // Refresh Edit-menu enablement from the newly active editor (§11.8);
+            // the stack only pushes on change, so pull its current state now.
+            coordinators[id]?.refreshUndoState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inkwellUndo)) { _ in
+            activeCoordinator?.performUndo()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inkwellRedo)) { _ in
+            activeCoordinator?.performRedo()
         }
         .onChange(of: appState.openTabs.map(\.id)) { _, ids in
             // A tab was closed → drop its coordinator so the EditorCoordinator /
@@ -194,6 +236,15 @@ struct ContentView: View {
                                 coordinator.formatState = formatState
                                 coordinator.findReplaceState = findReplaceState
                                 coordinator.setZoom(appState.zoomLevel)
+                                // §11.8: only the active tab drives Edit-menu
+                                // enablement. Captures appState (app singleton)
+                                // + tab.id (value) — never the coordinator/self.
+                                coordinator.onUndoStateChange = { canUndo, canRedo in
+                                    if appState.activeTabId == tab.id {
+                                        appState.canUndo = canUndo
+                                        appState.canRedo = canRedo
+                                    }
+                                }
                                 coordinators[tab.id] = coordinator
                             }
                         )
@@ -258,14 +309,17 @@ struct ContentView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.begin { response in
+        panel.begin { [appState] response in
             if response == .OK, let url = panel.url {
-                appState.workingDirectory = url
+                appState.openLibrary(pickedURL: url)
             }
         }
         #else
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        appState.workingDirectory = documentsURL
+        // PHASE_5A §二: pick any local folder and persist it via a
+        // security-scoped bookmark (was: hard-coded to the sandbox Documents).
+        FolderPickerPresenter.present { [appState] url in
+            appState.openLibrary(pickedURL: url)
+        }
         #endif
     }
     

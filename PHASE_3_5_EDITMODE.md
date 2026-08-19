@@ -186,6 +186,177 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 ---
 
+## 十一、Undo 边界重做:自建源码快照栈(方案 B,2026-07-22)
+
+> **Status**: 设计定稿,进入实施。阶段一调查结论 + 阶段二补充要求已并入本节,作为实施契约。
+
+### 11.1 背景与模型
+
+contentEditable 原生 undo 栈与 Phase 3.5 架构不兼容:cursor-leave 的程序化 DOM 替换(源码文本 → 渲染节点,`replaceChild`)**不进**原生栈,而打字 / `execCommand` **进**栈,两者混合导致 Cmd+Z 步数错乱与半渲染残留。本次接管 undo,自建**源码快照栈**。
+
+**模型(方案 B)**:栈中存 markdown **源码快照 + 光标逻辑锚点**。Undo = 恢复上一份源码 → 重新 parse/render → 恢复光标。理论基础与"源码权威"原则同构:**渲染态是源码的确定性投影,不入栈**。
+
+**已否决,不再提议或部分采用**:方案 A(继续依赖原生栈)、方案 C(语义操作日志 + 逆操作)。
+
+### 11.2 边界规则表(核心契约)
+
+| 操作 | 产生 undo 步 | 粒度 |
+|------|:---:|------|
+| 连续输入文字 | ✅ | 合并 |
+| IME 组字 | ✅ | 整个 composition 为一步,**绝不按中间态拆分** |
+| 连续退格 / 删除 | ✅ | 合并,规则同文字输入 |
+| 粘贴 | ✅ | 一步 |
+| slash menu 插入 | ✅ | 一步 |
+| 块级删除(表格 / carousel) | ✅ | 一步 |
+| 格式切换(加粗等) | ✅ | 一步 |
+| cursor-leave 触发渲染 | ❌ | 源码未变,是投影 |
+| 点击进 / 出编辑态 | ❌ | 视图状态 |
+| 主题切换重渲染 | ❌ | 视图状态 |
+| 异步渲染完成(mermaid 等) | ❌ | 视图状态 |
+
+**❌ 类天然不产生步的保证**:这些操作**不改变源码**,序列化产物 = `lastContent` 不变(渲染块经 `data-source-b64` 序列化回同一 `$$…$$` / ` ``` `),故 `onContentChange` 的 `md !== lastContent` 为 false,不触发提交。视图变更不入栈由此自动成立,无需特判。
+
+### 11.3 合并断开条件
+
+连续输入 / 删除在同一步内合并;满足**任一**即断开、开启新步:
+
+- 空闲 **1000ms**(距上次编辑)
+- **换行**(Enter)
+- **光标跳转**(点击定位、方向键移动到非连续位置)
+
+**标点不作为断开条件**。离散操作(粘贴 / slash 插入 / 块删除 / 格式切换 / IME 一次 composition)各自即一步:既关闭前一组,自身独立成步,其后打字再开新组。
+
+### 11.4 参数
+
+- **栈深度上限**:100 步,超出丢弃最旧。
+- **总字节预算**:**32 MB**(所有源码快照字节之和)。理由:100 步覆盖至约 320KB 的文档;更大文档按预算保留更少步数;为 undo 子系统设一个与文档大小无关的硬内存上限,远低于典型 WKWebView 内存预算。**超 100 步 或 超 32MB(任一)即从最旧丢弃**。
+- **跨保存**:保存**不是**编辑边界,undo 可越过保存点。
+- **IME**:`compositionstart`→`compositionend` 期间抑制一切边界与提交,`compositionend` 提交**一步**。
+- **恢复到编辑态**:undo/redo 落到"当时某块处于源码编辑态"的状态时,将该块重新打开为编辑态(启发式,不要求 100% 还原);**失败时降级为渲染态且不报错**。
+
+### 11.5 快照条目结构与双锚点(补充要求 5)
+
+每个栈条目 = 一个已提交状态 `Sᵢ`:
+
+```
+{ source,        // 该状态的 markdown 源码(复用 Editor.lastContent,见 11.7)
+  anchorBefore,  // group i 开始前的光标锚点 —— UNDO 用
+  anchorAfter }  // group i 结束时的光标锚点 —— REDO 用
+```
+
+- **Undo**(`Sᵢ → Sᵢ₋₁`):恢复 `Sᵢ₋₁.source`,光标落 `Sᵢ.anchorBefore`,指针 `i→i-1`。
+- **Redo**(`→ Sᵢ`):恢复 `Sᵢ.source`,光标落 `Sᵢ.anchorAfter`,指针 `i-1→i`。
+- **新编辑**(压入新状态)**清空 redo 分支**(标准不变量)。
+
+双锚点的必要性:光标跳转是断开条件,故 group i 的**起点**(`anchorBefore`)可能与前一组的**终点**不同;undo 要落在被撤销那组编辑发生处(`anchorBefore`),redo 要落在该组编辑结束处(`anchorAfter`)。捕获时机:组打开(边界后第一次内容变更)时记 `anchorBefore` = 变更前光标;组关闭(触达边界)时以 `source = lastContent`、`anchorAfter` = 当前光标提交条目。
+
+### 11.6 逻辑锚点(对 DOM 重建稳定,不用裸 offset)
+
+```
+anchor = { blockIndex,      // 光标所在顶层块在 #editor.children 的序号
+           charOffset,      // 块内 textContent 前缀字符数(块内累计)
+           inEditingFence } // 该块当时是否处于源码编辑态($$ / ```)
+```
+
+- **恢复**:re-parse 后按 `blockIndex` 定位新块,前序遍历文本节点累加长度到 `charOffset` 落 caret;`inEditingFence=true` 则先把该块重开为 live-fence 再落点。
+- **不复用** tab 切换的 `snapshotSelection`(存活 DOM 节点引用,`restoreSelection` 在节点脱离时 bail;整树重建后必失效)。
+- CE=false 渲染块内无 caret 位 → 锚到块边界。定位失败 → 降级、不报错。
+
+### 11.7 复用 `lastContent` 的确认(补充要求 2)
+
+**更新时机确认**:`Editor.lastContent` 仅两处写入——`loadMarkdown`(加载时)与 `onContentChange`(每次序列化产物变化时);`onContentChange` 被约 25 处编辑路径**同步直调,无 debounce**(仅 TOC / WordCount 各有自己无关的 refresh debounce)。**结论:`lastContent` 每次内容变更即同步更新,非 debounce、非仅保存时更新 → 快照复用它有效,零额外序列化。**
+
+**佐证性能实测(阶段一 Q2,in-app Chromium 引擎,真实 editor.html + vendored 资产;WKWebView 量级同阶)**:
+
+| 文档 | 渲染后 DOM 节点 | `getMarkdown()` 中位数 |
+|------|---:|---:|
+| 1KB 混合(mermaid+KaTeX+table+carousel) | 673 | 5.5 ms |
+| 50KB 混合(90×各块) | 30,153 | **448 ms** |
+| 200KB 纯文本(prose/table/list) | 15,575 | 30 ms |
+| 200KB 混合(部分渲染 27/357 mermaid) | 83K | ~180 ms(全渲染外推 ~1.5–2 s) |
+
+成本由**渲染 DOM 节点数**主导(mermaid SVG 每节点最贵),与源码字节数弱相关。这份全量序列化**今天已在每次按键同步付出**(`onContentChange`)。**硬约束:undo 绝不能引入第二次序列化**——一律复用 `lastContent`。(既有的每键全量序列化对 mermaid 重文档已偏卡,属独立 latent 性能问题,不在本次范围。)
+
+### 11.8 双侧接管(补充要求 1)
+
+- **JS**:拦截 `Cmd+Z` / `Cmd+Shift+Z`(`preventDefault` → 自建 undo / redo)。
+- **Swift `CommandGroup(replacing: .undoRedo)`**:Edit 菜单 Undo / Redo 只 `evaluateJavaScript` 进自建栈。**任何情况下不得回退到 `webView.undoManager`——双栈并存是本次最严重的失败模式。**
+- **canUndo / canRedo**:JS 在**栈变化时**(push / undo / redo / clear 后)经 bridge 推给 Swift,驱动菜单项启用态;**非高频**,不在每次按键推。
+- **iPadOS 系统撤销手势**(三指划 / 摇动,走 `UIResponder.undoManager`):**本次不接,记为已知缺口**(见 11.11)。
+
+### 11.9 BlockDeletion 去 execCommand 化(补充要求 4)
+
+`BlockDeletion.deleteBlock` 现用 `selectNode + execCommand('delete')` 借原生栈拿原子 undo。自建栈落地后改为朴素 `blockEl.remove()`,**原子性由删除前的源码快照提供**;并消除 execCommand 的 WKWebView 风险(相邻段落误并、复杂子树还原保真、空文档 caret)。光标落点(`_placeCaret`)与 `ensureEdgeGaps` 作为前向操作保留。`§3.5 / D1` 的"要原子可撤销必须过 execCommand"契约退休——见 11.10。
+
+### 11.10 D1 契约退休记录(补充要求 4:回溯保留,不静默删除)
+
+原 **D1**(见下方"设计债汇总")确立"enter/leave-edit 的 `replaceChild` 是不可撤销边界;要原子可撤销必须过 `execCommand`",并据此实现块级删除。**本节(11)以自建源码快照栈整体接管 undo 后,该规则被取代**:
+
+- 原子性来源从"原生栈单条 execCommand"改为"源码快照单步";
+- `replaceChild`(cursor-leave 渲染)不再是"不可撤销边界",而是"不改源码、天然不入栈的投影"(11.2);
+- 块级删除去 execCommand 化(11.9)。
+
+D1 原条目在"设计债汇总"中**保留并加退休批注**(取代原因 = 本节 11;时间 = 2026-07-22),不删除。
+
+### 11.11 已知缺口(如实记录)
+
+- **iPadOS 系统撤销手势**(三指划 / 摇动)走 `UIResponder.undoManager`,本次**不接**;这些手势不会触发自建栈,行为为 no-op(不误触原生栈——见 11.8 的"绝不回退原生"约束)。未来若接,需在 UIResponder 层桥接进自建栈。
+- 每键全量序列化对 mermaid 重文档的既有卡顿(11.7),与本次正交,未处理。
+
+### 11.12 设计修正:快照从 markdown 源码改为脱水 DOM(2026-07-22,交互验收后)
+
+**动机(实机验收暴露的缺口)**:原设计(11.1–11.6)以 **clean-markdown 源码**为快照。交互验收发现 markdown **无法表示编辑缓冲区状态**:
+
+- 空段落 `<p><br></p>` 序列化为空(`above<p><br></p>here` → `above\n\nhere`),re-parse 后消失 → undo 删除用户的空行、后续行上移(bug #1)。
+- 空行由回车产生却**不改 markdown** → 回车不产生 undo 步、undo 跳过它。
+- 上述使锚点 `blockIndex` 在 re-parse 后错位 → undo 后光标落到错误的块/位置(bug #4);落入空块时光标不可见(bug #2)。
+
+**两个轴(核心区分,写进契约)**:
+
+| 轴 | 权威 | 是否变 |
+|----|------|--------|
+| **磁盘源码权威** | `getMarkdown()` 输出干净标准 markdown,存盘 | **不变**(底线 1) |
+| **编辑缓冲区保真** | undo/redo 恢复的是编辑中的 DOM 状态(含空段落、编辑态 fence) | **新增**:由脱水 DOM 快照承载 |
+
+**新快照 = 脱水 DOM**(`_dehydrate`):`#editor.innerHTML`,其中 `[data-inkwell-ui]` 剥除、`.inkwell-block-renderer` 坍缩为**附录 C.2 的 parser 占位符**(`.inkwell-pending-renderer` + `data-pending-*`,无 SVG)。恢复(`restoreDehydrated`)= `innerHTML = snapshot` + **复用 `_resolvePendingRenderers()`**(不新写渲染逻辑)+ 既有 hydrate 尾。**快照永不落盘**;存盘仍走 `getMarkdown()`。fenced-code 根的 `data-source-b64` 是完整围栏,占位符需拆出内层 content + language(display-math / image-group 存全文,直接用)。
+
+**记录触发改为 `input` 事件**(不再是 `md !== lastContent`):`input` 覆盖打字/删除/回车/粘贴/execCommand;enter/leave-edit 的渲染替换是直改 DOM **无 `input`** → 天然不记步(§11.2 视图态保证,免特判);空行回车**有 `input`** → 现在能记步。slash 插入 / 块删除无 `input`,经 `recordDiscrete()` 显式记一步。
+
+**懒提交(性能)**:脱水含 clone,mermaid 重文档 clone 仍是瓶颈。故**只在组边界提交**(idle 定时器 / 光标跳转的 `selectionchange` / 回车 / 离散op),不每键脱水。边界提交在**下一次编辑之前**发生,快照绝不混入下一组的首个按键。
+
+**`inEditingFence` 字段移除(评估结论)**:编辑态 fence 在脱水快照里就是真实 `<pre>` 节点,restore 后 caret 靠 `blockIndex+charOffset` 自然落入;`restoreDehydrated` 顺带把 `EditMode._editingFence` 重新指向恢复出的 live fence。故锚点不再需要 `inEditingFence`,已删。
+
+**锚点排除 `[data-inkwell-ui]`**:`_charOffset` / `_locateChar` 均跳过 UI 子树(drag handle `⠿`),offset 为纯内容字符数,不再依赖"handle 两侧自抵消",消除 #4 的 off-by-one 隐患。`blockIndex` 钳制保留为永久防御。
+
+**性能实测(dehydrate,in-app Chromium,text/table 文档)**:1KB 0.1ms / 50KB 2.9ms / 200KB 13.5ms;快照体积(**无 SVG**)2.6KB / 124KB / 496KB。mermaid 重文档的 dehydrate 与 `getMarkdown` 同阶(clone 主导),故懒提交把它限制到每组一次。
+
+**字节预算(重算)**:脱水 HTML ≈ markdown 的 ~2.4×。**保持 32MB**:200KB 文档每快照 ~0.5MB → ~64 步(<100 步上限);典型文档(数 KB)100 步远未触及。超 100 步或 32MB 任一即丢最旧。
+
+**#3(`today`→`todya`)非本模型问题**:插桩在每个快照捕获点比对"存储源码 vs live DOM 真实文本",**逐键完全一致**,且 `today?` round-trip 逐字节稳定 → undo 恢复的内容忠实。`todya` 只能来自 live DOM 曾含此串,即 **macOS 文本替换(autocorrect / 联想)** 的中间态被 undo 忠实还原;Chromium 无法复现。换快照格式不涉及它。可选加固:把 `inputType === "insertReplacementText"` 折进前一步(待定)。
+
+**验收(harness 实测通过)**:#1 空行(含多个"上上空行")undo 后保留;#4 undo 后光标落回被保留的正确行;#2 空块 undo 后光标可见;回归——连续输入合并、enter/leave-edit 零步、mermaid/katex/table/carousel 经 undo round-trip 干净(无 SVG 落盘)、redo、块删除单步,全部通过。**WKWebView 实机交互仍待用户验收**。
+
+### 11.13 代码 / math 区禁用系统文本处理(2026-07-23)
+
+**动机**:系统级文本处理(autocorrect、拼写检查、智能引号 / 破折号)对代码标识符与 LaTeX 宏是纯破坏源——已确认的 #3(`today`→`todya`)即 autocorrect 静默替换。散文区保留合理,**代码 / 公式区必须关闭**。
+
+**范围**:fenced code 源码编辑态、`$$` math 源码编辑态、行内 code span。**散文区完全不动**。
+
+**机制**:统一 `disableTextProcessing(el)` 对元素(及其内 `<code>`)设 `spellcheck="false"` `autocorrect="off"` `autocapitalize="off"`。调用点覆盖两类:
+
+- **静态**(冷加载 / dehydrated 恢复):`_hydrateDOM` 在 `_resolvePendingRenderers` 之后 `querySelectorAll('pre, code')` 批量应用——顺带覆盖 renderer-fallback 的 `<pre>`。
+- **动态创建**(进入编辑态即生效):`EditMode._doEnterEdit`(渲染块→源码 fence)、`LiveConverter` 的 ` ``` ` / `$$` fence 与行内 code、SlashMenu 的 code / math、`toggleInlineCode`、`insertCodeBlock`。均在**元素插入 DOM、光标进入之前**调用。
+
+**动态生效实测(harness,Chromium)**:进入编辑态时 fence 的 `<pre>` 与 `<code>` 均带三属性;IDL `.spellcheck` **有效为 `false`**(散文 `<p>` 仍 `true`),即属性真正生效非仅存在;**进出编辑态多次往返稳定**;经 dehydrated-DOM undo 恢复(走 `_hydrateDOM`)后仍保持。散文 `<p>` 三属性均 `null`,行为不变。
+
+**Swift 侧现状(只报告,不改)**:`createWebView` 的 `WKWebViewConfiguration` 仅设 `allowFileAccessFromFileURLs` / `drawsBackground`,**无任何文本替换 / 拼写 / 智能引号配置**。macOS 上 WKWebView 的拼写与 autocorrect 遵循 HTML `spellcheck` / `autocorrect` 属性(本次已设);**不改全局配置**——app 级关闭会误伤散文区。
+
+**智能引号 / 破折号(重点,拦截方案只报告不实施)**:三属性覆盖拼写与 autocorrect,但**智能引号 / 破折号是 macOS 独立的文本替换层**(系统"智能引号和破折号"设置,`NSAutomaticQuoteSubstitution`),`spellcheck` / `autocorrect` 属性**很可能不足以阻止**它。Chromium 无此层,无法实测——需用户在 WKWebView 验收第 2 项(`"hello"` / `--flag` 是否保持直引号 / 双连字符)。**若属性不足**,拦截方案(未实施):在 `beforeinput` / `input` 处**区分区域**——光标在 code / math 区且检测到替换产物(弯引号 `" " ' '`、em/en dash `— –`,或 `inputType === "insertReplacementText"`)时 `preventDefault` 并插入直引号 / 连字符原文;散文区放行。此法区域感知、不动全局、不伤散文,优于 app 级 `NSUserDefaults` 关闭(后者伤散文,否决)。
+
+**验收待用户手动执行(WKWebView)**:代码块误拼不纠正 / 无红线;`"hello"` / `--flag` 保持直引号双连字符(智能引号项);math 区 `\frac` `\alpha` 不纠正;散文纠正照旧;进出编辑多次属性稳定;iPadOS 软键盘代码编辑时不显纠正条。
+
+---
+
 ## 附录:Open Questions 裁决记录
 
 > 实施前对照 `Resources/editor.html` 现有代码确认,2026-07-08 裁决。
@@ -250,6 +421,8 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 **升级时机**:若出现第二种注入 contentEditable DOM 的 UI 装饰物,应升级为统一标记属性(如 `data-inkwell-ui`)过滤,而非逐一枚举 class name。
 
+> **已兑现(2026-07-20)**:`data-inkwell-ui` 契约落地,见 `PHASE_3_ARCHITECTURE.md` §3.4。serializer/剪贴板经统一 `stripUIElements` 剥除,LiveConverter `getBlockSourceText` 改按属性跳过。既有 keydown/beforeinput 删除守卫等**非内容出口**处的逐 class 枚举保留原样(不在内容出口范围)。
+
 ### 实施记录:§5.2 leave-edit 块类型派发扩展
 
 **设计文档盲区**:§5.2 的 leave-edit 路径和 §5.1 的 enter-edit 路径均以围栏代码块(` ``` `)为中心描述,未明确涵盖 `display-math`(`$$...$$`)块类型。实施时 `_doEnterEdit` / `_doLeaveEdit` 最初仅处理围栏格式,导致 KaTeX 公式块点击进入编辑后离开时无法重渲染。
@@ -285,8 +458,8 @@ runAsync 的"同 root 单任务 + 新任务 abort 旧任务"保证已覆盖大�
 
 | 编号 | 债务 | 来源 | 升级条件 |
 |------|------|------|----------|
-| D1 | Undo 不可撤销边界 | OQ1 裁决 | enter/leave-edit 的 `replaceChild` 不进浏览器 undo 栈。`<pre>` 内 Enter 直接 DOM 插入的换行也不进撤销栈。若用户反馈强烈,需引入自管 undo 系统。 |
-| D2 | UI 装饰物排除硬编码 | getBlockSourceText | 仅排除 `.inkwell-drag-handle`。第二种 UI 装饰物出现时需升级为统一 `data-inkwell-ui` 属性过滤。 |
+| D1 | ~~Undo 不可撤销边界~~ **已退休(2026-07-22,被 §11 取代)** | OQ1 裁决 | ~~enter/leave-edit 的 `replaceChild` 不进浏览器 undo 栈。`<pre>` 内 Enter 直接 DOM 插入的换行也不进撤销栈。若用户反馈强烈,需引入自管 undo 系统。~~**正式规则(2026-07-21,块级删除定)**:~~要原子可撤销 → 必须过 `execCommand`;裸 DOM 改动一律是不可撤销边界。块级删除据此走 `selectNode + execCommand('delete')` 拿单步原子 undo,见 `PHASE_3_ARCHITECTURE.md` §3.5。~~ **退休原因**:§11 以自建源码快照栈整体接管 undo;原子性来源改为源码快照单步,`replaceChild` 重新归类为"不改源码的投影"(不再是不可撤销边界),块级删除去 execCommand 化(§11.9)。原文保留见证设计演进,不删除。 |
+| D2 | ~~UI 装饰物排除硬编码~~ **已兑现(2026-07-20)** | getBlockSourceText | ~~仅排除 `.inkwell-drag-handle`~~。已升级为统一 `data-inkwell-ui` 属性契约,见 `PHASE_3_ARCHITECTURE.md` §3.4。 |
 | D3 | §5.2 块类型派发 | Step 4 实施 | enter/leave-edit 按定界符格式派发(`` ``` `` 和 `$$`)。新增非围栏块类型时,`_doEnterEdit` 定界符检测和 `_doLeaveEdit` block descriptor 构造是必经改动点。 |
 
 ### 契约变更:§4 blur 语义收窄

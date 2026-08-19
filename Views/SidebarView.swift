@@ -220,12 +220,26 @@ struct SidebarView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
-            Image(systemName: "folder")
-                .font(.system(size: 24))
-                .foregroundStyle(.tertiary)
-            Text("No folder open")
-                .font(.system(size: 13))
-                .foregroundStyle(.tertiary)
+            if let reopenError = appState.libraryReopenError {
+                // Distinct from the plain "No folder open" so a failed library
+                // restore is never confusable with KI-1's blank sidebar
+                // (PHASE_5A §二, constraint #1).
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.orange)
+                Text(reopenError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            } else {
+                Image(systemName: "folder")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.tertiary)
+                Text("No folder open")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+            }
             Button("Open Folder") { openFolder() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -297,14 +311,17 @@ struct SidebarView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.begin { response in
+        panel.begin { [appState] response in
             if response == .OK, let url = panel.url {
-                appState.workingDirectory = url
+                appState.openLibrary(pickedURL: url)
             }
         }
         #else
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        appState.workingDirectory = documentsURL
+        // PHASE_5A §二: pick any local folder and persist it via a
+        // security-scoped bookmark (was: hard-coded to the sandbox Documents).
+        FolderPickerPresenter.present { [appState] url in
+            appState.openLibrary(pickedURL: url)
+        }
         #endif
     }
     
@@ -359,6 +376,7 @@ struct SidebarView: View {
 // MARK: - Typora File Row (recursive tree node)
 
 struct TyporaFileRow: View {
+    @EnvironmentObject var appState: AppState
     @ObservedObject var node: FileNode
     @Binding var selectedFile: FileItem?
     let accentColor: Color
@@ -430,6 +448,12 @@ struct TyporaFileRow: View {
                         isDirectory: false,
                         modificationDate: node.modificationDate
                     )
+                    // KI-1 (transitional): signal a file-row tap so ContentView
+                    // pages to the editor in compact width — even when this file
+                    // is already the active tab. FileItem is url-equatable, so
+                    // re-tapping it wouldn't otherwise change selectedFile or fire
+                    // any onChange. See PHASE_5A §一 / KNOWN_ISSUES KI-1.
+                    appState.editorRevealTick &+= 1
                 }
             }
             .contextMenu {

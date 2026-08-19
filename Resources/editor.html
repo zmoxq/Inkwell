@@ -39,8 +39,10 @@
     position: relative;
   }
   #editor pre code.hljs {
-    padding: 1em;
-    border-radius: 6px;
+    /* Padding is owned by the <pre> (see .ProseMirror pre in theme baseCSS).
+       hljs code must not add a second inset, or a 1–2 line block stacks
+       pre-padding + 1em code-padding and looks bloated. */
+    padding: 0;
   }
   /* Language label badge */
   #editor pre::after {
@@ -258,6 +260,15 @@
     background: var(--border, #d0d0d0);
     margin: 2px 3px;
   }
+  /* Destructive block-delete item (shared by table + carousel block menus).
+     Visually set apart from other items; relies on undo, no confirm dialog. */
+  .inkwell-table-toolbar button.inkwell-block-delete {
+    color: #c0392b;
+    font-weight: 600;
+  }
+  .inkwell-table-toolbar button.inkwell-block-delete:hover {
+    background: rgba(192, 57, 43, 0.12);
+  }
 
   /* Alignment classes */
   #editor td.align-center, #editor th.align-center { text-align: center; }
@@ -271,6 +282,8 @@
     }
     .inkwell-table-toolbar button { color: #ddd; }
     .inkwell-table-toolbar button:hover { background: #444; }
+    .inkwell-table-toolbar button.inkwell-block-delete { color: #ff6b5e; }
+    .inkwell-table-toolbar button.inkwell-block-delete:hover { background: rgba(255,107,94,0.15); }
   }
 
   /* ========== Image Carousel ========== */
@@ -949,6 +962,7 @@
             btn.className = 'renderer-edit-action';
             btn.type = 'button';
             btn.textContent = 'Edit Source';
+            btn.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
             root.appendChild(btn);
           }
           return root;
@@ -976,6 +990,17 @@
           }
           return el;
         },
+
+        // Attached-UI factory: same signature as createElement, but auto-tags
+        // the element as UI decoration — invisible to serializer / clipboard /
+        // LiveConverter via [data-inkwell-ui], and non-editable. Extension
+        // authors use this so they don't have to remember the §3.4 contract.
+        createUIElement(tag, attrs, ...children) {
+          const el = this.createElement(tag, attrs, ...children);
+          el.setAttribute('data-inkwell-ui', '');
+          el.setAttribute('contenteditable', 'false');
+          return el;
+        },
   
         // ---- 状态管理（Renderer 用）----
   
@@ -985,6 +1010,7 @@
           out.innerHTML = '';
           const ph = document.createElement('div');
           ph.className = 'renderer-loading';
+          ph.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
           ph.textContent = message || 'Loading…';
           out.appendChild(ph);
         },
@@ -995,6 +1021,7 @@
           out.innerHTML = '';
           const box = document.createElement('div');
           box.className = 'renderer-error';
+          box.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
           box.setAttribute('data-error-type', errorInfo?.type || 'unknown');
           box.textContent = errorInfo?.message || 'Render failed';
           out.appendChild(box);
@@ -2456,7 +2483,7 @@
       return images;
     }
 
-    function buildCarouselDOM(images) {
+    function buildCarouselDOM(images, ctx) {
       const carousel = document.createElement('div');
       carousel.className = 'inkwell-carousel';
       carousel.setAttribute('data-carousel', '');
@@ -2477,38 +2504,33 @@
       });
       carousel.appendChild(track);
 
-      const prevBtn = document.createElement('button');
-      prevBtn.className = 'inkwell-carousel-arrow prev';
-      prevBtn.setAttribute('aria-label', 'Previous');
-      const prevIcon = document.createElement('span');
-      prevIcon.className = 'inkwell-carousel-arrow-icon';
-      prevIcon.textContent = '‹';
-      prevBtn.appendChild(prevIcon);
+      // Navigation controls are attached UI (§3.4), created via
+      // ctx.createUIElement so they carry data-inkwell-ui + contenteditable.
+      // The icon spans / individual dots are stripped along with their tagged
+      // parent's subtree, so only the top-level controls need tagging.
+      const prevIcon = ctx.createElement('span', { className: 'inkwell-carousel-arrow-icon' }, '‹');
+      const prevBtn = ctx.createUIElement('button',
+        { className: 'inkwell-carousel-arrow prev', 'aria-label': 'Previous' }, prevIcon);
       carousel.appendChild(prevBtn);
 
-      const nextBtn = document.createElement('button');
-      nextBtn.className = 'inkwell-carousel-arrow next';
-      nextBtn.setAttribute('aria-label', 'Next');
-      const nextIcon = document.createElement('span');
-      nextIcon.className = 'inkwell-carousel-arrow-icon';
-      nextIcon.textContent = '›';
-      nextBtn.appendChild(nextIcon);
+      const nextIcon = ctx.createElement('span', { className: 'inkwell-carousel-arrow-icon' }, '›');
+      const nextBtn = ctx.createUIElement('button',
+        { className: 'inkwell-carousel-arrow next', 'aria-label': 'Next' }, nextIcon);
       carousel.appendChild(nextBtn);
 
-      const dots = document.createElement('div');
-      dots.className = 'inkwell-carousel-dots';
+      const dots = ctx.createUIElement('div', { className: 'inkwell-carousel-dots' });
       images.forEach((_, idx) => {
-        const dot = document.createElement('button');
-        dot.className = 'inkwell-carousel-dot' + (idx === 0 ? ' active' : '');
-        dot.setAttribute('data-dot', idx);
-        dot.setAttribute('aria-label', 'Slide ' + (idx + 1));
+        const dot = ctx.createElement('button', {
+          className: 'inkwell-carousel-dot' + (idx === 0 ? ' active' : ''),
+          'data-dot': idx,
+          'aria-label': 'Slide ' + (idx + 1)
+        });
         dots.appendChild(dot);
       });
       carousel.appendChild(dots);
 
-      const counter = document.createElement('div');
-      counter.className = 'inkwell-carousel-counter';
-      counter.textContent = '1 / ' + images.length;
+      const counter = ctx.createUIElement('div',
+        { className: 'inkwell-carousel-counter' }, '1 / ' + images.length);
       carousel.appendChild(counter);
 
       return carousel;
@@ -2518,6 +2540,7 @@
       name: 'image-group',
       type: 'image-group',
       editStyle: 'none',
+      deletable: true,                  // offers a Delete item in its block menu (§3.5)
       capabilities: { rerenderOn: [] },
 
       match(block) {
@@ -2536,7 +2559,7 @@
         });
 
         const out = root.querySelector('.renderer-output');
-        const carousel = buildCarouselDOM(images);
+        const carousel = buildCarouselDOM(images, ctx);
         out.appendChild(carousel);
 
         if (typeof CarouselManager !== 'undefined') {
@@ -2916,6 +2939,35 @@
   // ----------------------------------------------------------
   // Markdown Serializer: HTML → Markdown
   // ----------------------------------------------------------
+  // Remove all attached-UI subtrees ([data-inkwell-ui]) from a tree before it
+  // reaches a content exit (serialize / clipboard). MUST be called on a
+  // DETACHED clone or a selection fragment — it mutates `root` in place, so
+  // calling it on the live editor would tear out the user's UI. Shared by the
+  // serializer and the clipboard handler. See PHASE_3_ARCHITECTURE.md §3.4.
+  function stripUIElements(root) {
+    if (root && root.querySelectorAll) {
+      root.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+    }
+    return root;
+  }
+
+  // Disable system text processing (spellcheck / autocorrect / smart quotes &
+  // dashes / autocapitalize) on code + math editing regions — these mangle
+  // identifiers and LaTeX macros (the confirmed #3 autocorrect corruption).
+  // Prose is never touched. Applied to a <pre>/<code> (cascades to inner
+  // <code>) at creation, BEFORE the caret enters, so WebKit honours it on the
+  // editing region. See PHASE_3_5_EDITMODE.md §11.13.
+  function disableTextProcessing(el) {
+    if (!el || !el.setAttribute) return;
+    const set = (n) => {
+      n.setAttribute('spellcheck', 'false');
+      n.setAttribute('autocorrect', 'off');
+      n.setAttribute('autocapitalize', 'off');
+    };
+    set(el);
+    if (el.querySelectorAll) el.querySelectorAll('code').forEach(set);
+  }
+
   const MarkdownSerializer = {
     serialize(el) {
       let md = '';
@@ -3119,14 +3171,14 @@
       this.editor = editor;
     },
 
-    // Return the user-authored text of a block element, excluding UI
-    // decorations injected into the contentEditable DOM (e.g. drag handles).
-    // Currently only strips .inkwell-drag-handle; see PHASE_3_5_EDITMODE.md
-    // appendix for the design-debt note on generalizing this.
+    // Return the user-authored text of a block element, excluding attached-UI
+    // decorations injected into the contentEditable DOM (drag handles, fold
+    // toggles, etc.). Skips any [data-inkwell-ui] child subtree per the §3.4
+    // contract, so LiveConverter block matching never sees their text.
     getBlockSourceText(el) {
       let t = '';
       for (const ch of el.childNodes) {
-        if (ch.nodeType === Node.ELEMENT_NODE && ch.classList.contains('inkwell-drag-handle')) continue;
+        if (ch.nodeType === Node.ELEMENT_NODE && ch.hasAttribute('data-inkwell-ui')) continue;
         t += ch.textContent;
       }
       return t;
@@ -3223,6 +3275,7 @@
         }
         code.textContent = '\n';
         pre.appendChild(code);
+        disableTextProcessing(pre);   // §11.13: code fence, before caret enters
         block.parentNode.replaceChild(pre, block);
         if (hasRenderer) EditMode._editingFence = pre;
         this.editor.ensureEdgeGaps();
@@ -3247,6 +3300,7 @@
         code.className = 'inkwell-live-fence';
         code.textContent = '$$\n\n$$';
         pre.appendChild(code);
+        disableTextProcessing(pre);   // §11.13: math fence, before caret enters
         block.parentNode.replaceChild(pre, block);
         EditMode._editingFence = pre;
         this.editor.ensureEdgeGaps();
@@ -3426,6 +3480,7 @@
         converted = this.tryConvertInline(textNode, /`([^`]+?)`/, (match, content) => {
           const el = document.createElement('code');
           el.textContent = content;
+          disableTextProcessing(el);   // §11.13: inline code span
           return el;
         });
         if (converted) break;
@@ -3537,13 +3592,28 @@
   // Carousel Manager: image carousel interaction
   // ----------------------------------------------------------
   const CarouselManager = {
+    editor: null,
+    activeCarousel: null,
+    menu: null,
+
     init(editor) {
+      this.editor = editor;
       // Use event delegation on the editor element
       editor.element.addEventListener('click', (e) => this.onClick(e));
       editor.element.addEventListener('keydown', (e) => this.onKeyDown(e));
+      // Dismiss the block menu on click outside the carousel / menu
+      document.addEventListener('click', (e) => {
+        if (this.menu && !this.menu.contains(e.target) && !e.target.closest('.inkwell-carousel')) {
+          this.hideMenu();
+        }
+      });
     },
 
     onClick(e) {
+      // Any click within a carousel shows/refreshes its block menu
+      const clickedCarousel = e.target.closest('.inkwell-carousel');
+      if (clickedCarousel) this.showMenu(clickedCarousel);
+
       // Arrow buttons
       const arrow = e.target.closest('.inkwell-carousel-arrow');
       if (arrow) {
@@ -3587,6 +3657,46 @@
       const current = parseInt(carousel.getAttribute('data-current'));
       const next = Math.max(0, Math.min(count - 1, current + delta));
       this.goTo(carousel, next);
+    },
+
+    // --- Block menu (floating toolbar, mirrors TableManager; §3.5) ---
+
+    // The top-level block for a carousel is its .inkwell-block-renderer root.
+    // Shows a floating menu with a Delete item when the renderer declares
+    // deletable:true (image-group). No-op for non-deletable renderers.
+    showMenu(carousel) {
+      const root = carousel.closest('.inkwell-block-renderer');
+      if (!root) return;
+      const spec = (typeof ExtensionRegistry !== 'undefined')
+        ? ExtensionRegistry._findRendererByName(root.getAttribute('data-renderer'))
+        : null;
+      if (!spec || !spec.deletable) return;
+      if (this.activeCarousel === root && this.menu) return;   // already shown
+
+      this.hideMenu();
+      this.activeCarousel = root;
+
+      const tb = document.createElement('div');
+      tb.className = 'inkwell-table-toolbar';   // reuse floating-toolbar styling
+      tb.contentEditable = 'false';
+
+      const delItem = BlockDeletion.createMenuItem(root, '🗑 Carousel');
+      delItem.title = 'Delete carousel';
+      delItem.addEventListener('mousedown', () => this.hideMenu());
+      tb.appendChild(delItem);
+
+      const container = document.querySelector('.editor-container');
+      const rootRect = root.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      tb.style.left = Math.max(0, rootRect.left - containerRect.left) + 'px';
+      tb.style.top = (rootRect.top - containerRect.top - 38) + 'px';
+      container.appendChild(tb);
+      this.menu = tb;
+    },
+
+    hideMenu() {
+      if (this.menu) { this.menu.remove(); this.menu = null; }
+      this.activeCarousel = null;
     },
 
     goTo(carousel, idx) {
@@ -3805,6 +3915,85 @@
     _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); },
     _shortUrl(s) { try { return decodeURIComponent(s).split('/').pop() || s; } catch(e) { return s; } }
   };
+  // ----------------------------------------------------------
+  // Block Deletion: unified "delete whole block" for structured blocks.
+  // Behavior lives here once; block types only declare whether they offer a
+  // delete item (carousel via spec deletable:true; table wired directly by
+  // TableManager). Future renderer blocks reuse deleteBlock / createMenuItem.
+  // See PHASE_3_ARCHITECTURE.md §3.5.
+  // ----------------------------------------------------------
+  const BlockDeletion = {
+    editor: null,
+    init(editor) { this.editor = editor; },
+
+    // True if a caret can rest inside `node` (not an atomic / CE=false block).
+    _canCaret(node) {
+      return !!node && node.tagName !== 'PRE' &&
+        !(node.classList && node.classList.contains('inkwell-block-renderer')) &&
+        !(node.getAttribute && node.getAttribute('contenteditable') === 'false');
+    },
+
+    // Removal of an entire top-level block (direct child of #editor).
+    // Atomicity now comes from the undo source-snapshot stack (one discrete
+    // step, §11.9), NOT from execCommand — so this is a plain DOM remove().
+    // That also drops the WebKit-specific risks of the old
+    // selectNode+execCommand('delete') approach (neighbour-paragraph merge,
+    // subtree-restore fidelity, empty-doc caret).
+    deleteBlock(blockEl) {
+      const editor = this.editor.element;
+      if (!blockEl || blockEl.parentNode !== editor) return;
+
+      // Landing references captured BEFORE removal.
+      const prev = blockEl.previousElementSibling;
+      const next = blockEl.nextElementSibling;
+
+      blockEl.remove();
+
+      // Keep the document editable. When the deleted block was the only
+      // content, ensureEdgeGaps inserts a fresh <p><br></p> and focuses it —
+      // it owns the caret in that case.
+      this.editor.ensureEdgeGaps();
+      if (this._canCaret(prev) || this._canCaret(next)) {
+        this._placeCaret(prev, next);
+      }
+
+      UndoStack.recordDiscrete();   // block deletion = one atomic undo step (§11.2)
+      this.editor.onContentChange();
+    },
+
+    // Caret to end of previous block, else start of next block.
+    _placeCaret(prev, next) {
+      let target, toEnd;
+      if (this._canCaret(prev)) { target = prev; toEnd = true; }
+      else { target = next; toEnd = false; }
+      if (!target) return;
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      range.collapse(!toEnd);   // collapse(false)=end, collapse(true)=start
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    },
+
+    // A destructive "Delete" menu item wired to remove `blockEl`. Tagged
+    // data-inkwell-ui + contenteditable=false so it never reaches the
+    // serializer/clipboard (§3.4). Callers append it to their block menu.
+    createMenuItem(blockEl, label) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'inkwell-block-delete';
+      btn.textContent = label || 'Delete';
+      btn.setAttribute('data-inkwell-ui', '');
+      btn.setAttribute('contenteditable', 'false');
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.deleteBlock(blockEl);
+      });
+      return btn;
+    }
+  };
+
   const TableManager = {
     editor: null,
     activeTable: null,
@@ -3979,6 +4168,16 @@
         });
         tb.appendChild(btn);
       });
+
+      // Destructive: delete the whole table (block-level deletion, §3.5).
+      // Set apart by a separator + red styling; relies on undo, no confirm.
+      const sep = document.createElement('div');
+      sep.className = 'separator';
+      tb.appendChild(sep);
+      const delItem = BlockDeletion.createMenuItem(table, '🗑 Table');
+      delItem.title = 'Delete table';
+      delItem.addEventListener('mousedown', () => this.hideToolbar());
+      tb.appendChild(delItem);
 
       // Append to editor-container (outside contentEditable) for proper rendering
       const container = document.querySelector('.editor-container');
@@ -4246,6 +4445,7 @@
         const handle = document.createElement('span');
         handle.className = 'inkwell-drag-handle';
         handle.setAttribute('contenteditable', 'false');
+        handle.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
         handle.textContent = '⠿';
         // For headings, insert after fold toggle (if present)
         const foldToggle = block.querySelector('.inkwell-fold-toggle');
@@ -4499,6 +4699,7 @@
           const btn = document.createElement('span');
           btn.className = 'inkwell-fold-toggle';
           btn.setAttribute('contenteditable', 'false');
+          btn.setAttribute('data-inkwell-ui', '');   // §3.4 attached UI
           h.insertBefore(btn, h.firstChild);
         }
       });
@@ -5032,6 +5233,7 @@
           const code = document.createElement('code');
           code.textContent = '\n';
           pre.appendChild(code);
+          disableTextProcessing(pre);   // §11.13
           if (block) block.parentNode.replaceChild(pre, block);
           else ed.element.appendChild(pre);
           this._setCursor(code, 0);
@@ -5071,18 +5273,36 @@
           break;
         }
         case 'math': {
+          // Display-math editing fence — the SAME structure LiveConverter
+          // produces for a live-typed `$$` (data-block-type=display-math,
+          // inkwell-live-fence, both $$ delimiters present). Previously this
+          // inserted a plain `language-math` code block, which is not a math
+          // block at all. Stays in edit mode with the caret on the empty
+          // middle line so the user types the formula directly; on cursor-
+          // leave the katex-display BlockRenderer renders it — the same path
+          // as the parser and live-input entries (three paths converge).
           const pre = document.createElement('pre');
-          pre.setAttribute('data-language', 'math');
+          pre.setAttribute('data-block-type', 'display-math');
           const code = document.createElement('code');
-          code.className = 'language-math';
-          code.textContent = '\n';
+          code.className = 'inkwell-live-fence';
+          code.textContent = '$$\n\n$$';
           pre.appendChild(code);
+          disableTextProcessing(pre);   // §11.13: math fence, before caret enters
           if (block) block.parentNode.replaceChild(pre, block);
           else ed.element.appendChild(pre);
-          this._setCursor(code, 0);
+          EditMode._editingFence = pre;
+          ed.ensureEdgeGaps();
+          // Caret on the empty middle line (offset 3 = right after "$$\n").
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.setStart(code.firstChild, 3);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
           break;
         }
       }
+      UndoStack.recordDiscrete();   // slash-menu insert = one atomic undo step (§11.2)
       ed.onContentChange();
     },
 
@@ -5288,6 +5508,7 @@
       if (lang) code.setAttribute('data-fence-language', lang);
       code.textContent = inner || '\n';
       pre.appendChild(code);
+      disableTextProcessing(pre);   // §11.13: before the caret enters the fence
 
       // Replace renderer root with editable fence
       if (!blockRoot.parentNode) return;
@@ -5444,6 +5665,316 @@
   window.EditMode = EditMode;
 
   // ----------------------------------------------------------
+  // Undo/Redo — self-built source-snapshot stack (§11).
+  // Stores markdown source snapshots + logical cursor anchors. Undo restores
+  // the previous source, re-parses/renders, and restores the caret. Rendered
+  // state is a projection of source and never enters the stack — view-only
+  // transitions (cursor-leave render, enter/leave-edit, theme, async render)
+  // produce identical source so onContentChange never records them. Replaces
+  // the native contentEditable undo stack (D1 retired). See §11.
+  // ----------------------------------------------------------
+  const UndoStack = {
+    editor: null,
+    MAX_STEPS: 100,
+    MAX_BYTES: 32 * 1024 * 1024,   // §11.4 byte budget (dehydrated-HTML total)
+    IDLE_MS: 1000,                 // §11.3 idle break
+
+    // Stack of committed states. Each snapshot is a DEHYDRATED DOM string
+    // (§11 revision, 2026-07-22): #editor.innerHTML with attached UI stripped
+    // and rendered blocks collapsed to parser-style placeholders (no SVG), so
+    // editing state that markdown cannot represent — empty paragraphs, editing
+    // fences — survives undo. Disk save is unchanged (getMarkdown → clean
+    // markdown). Snapshots NEVER touch disk. Committed lazily (at group
+    // boundaries), so a heavy dehydrate runs per word/pause, not per keystroke.
+    _stack: [],        // [{ html, anchorBefore, anchorAfter, bytes }]
+    _idx: -1,          // current committed state; entries after _idx are redo
+    _bytes: 0,
+    _dirty: false,     // uncommitted edits ahead of _stack[_idx] (open group)
+    _groupBefore: null,// caret at the start of the current open group
+    _lastEditAt: 0,
+    _lastPostCaret: null,
+    _preEditCaret: null,
+    _idleTimer: null,
+    _composing: false,
+    _breakNext: false,
+    _pendingDiscrete: false,
+    _restoring: false,
+
+    init(editor) {
+      this.editor = editor;
+      const el = editor.element;
+      // Pre-mutation caret (keydown fires before the edit; reliable across
+      // input paths). Enter is a newline break.
+      el.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        this._preEditCaret = this._anchor();
+        if (e.key === 'Enter') this._breakNext = true;
+      });
+      el.addEventListener('beforeinput', (e) => {
+        if (this._composing) return;
+        if (!this._preEditCaret) this._preEditCaret = this._anchor();
+        const t = e.inputType || '';
+        if (t === 'insertFromPaste' || t === 'insertFromDrop' ||
+            t.indexOf('format') === 0 || t === 'insertUnorderedList' ||
+            t === 'insertOrderedList' || t === 'insertHorizontalRule') {
+          this._pendingDiscrete = true;
+        }
+      });
+      // Record on real content edits. `input` fires for typing / delete / Enter
+      // / paste / execCommand; enter/leave-edit render swaps are direct-DOM
+      // with NO input, so they never record — §11.2 view-only guarantee, free.
+      el.addEventListener('input', () => { if (!this._composing) this._onEdit(); });
+      el.addEventListener('compositionstart', () => {
+        if (this._dirty) this._commit();      // composition is its own step
+        this._composing = true;
+      });
+      el.addEventListener('compositionend', () => {
+        this._composing = false;
+        this._onEdit();                        // whole composition = one edit
+        this._breakNext = true;
+      });
+    },
+
+    // Seed with the current document as base state (a fresh document is a fresh
+    // history). Called from loadMarkdown and empty-doc init.
+    reset() {
+      this._clearIdle();
+      const html = this._dehydrate();
+      this._stack = [{ html, anchorBefore: null, anchorAfter: this._anchor(), bytes: html.length }];
+      this._idx = 0; this._bytes = html.length;
+      this._dirty = false; this._groupBefore = null; this._lastPostCaret = null;
+      this._breakNext = false; this._pendingDiscrete = false; this._preEditCaret = null;
+      this._pushState();
+    },
+
+    // Programmatic single-step op with no input event (slash insert, block
+    // delete). Call AFTER the DOM change: commits any open group, then commits
+    // this op as its own step.
+    recordDiscrete() {
+      if (this._restoring) return;
+      if (this._dirty) this._commit();
+      this._groupBefore = this._preEditCaret ||
+        (this._stack[this._idx] ? this._stack[this._idx].anchorAfter : null);
+      this._lastPostCaret = this._anchor();
+      this._dirty = true;
+      this._commit();
+      this._breakNext = true;
+      this._preEditCaret = null;
+    },
+
+    _onEdit() {
+      if (this._restoring) return;
+      const now = Date.now();
+      const pre = this._preEditCaret;
+      if (!this._dirty) {                  // this edit opens a new group
+        this._groupBefore = pre ||
+          (this._stack[this._idx] ? this._stack[this._idx].anchorAfter : null);
+        this._dirty = true;
+        this._pushState();                 // enable menu once per group, not per key
+      }
+      // This edit coalesces into the (now open) group.
+      const discrete = this._pendingDiscrete;
+      const breakAfter = this._breakNext;  // newline (Enter): finish the group AFTER it
+      this._pendingDiscrete = false;
+      this._breakNext = false;
+      this._lastEditAt = now;
+      this._lastPostCaret = this._anchor();
+      this._preEditCaret = null;
+      // Commit at the group boundary. paste/format are their own step; Enter
+      // finishes the current line's group (it is part of it). Idle and cursor-
+      // jump commit via the idle timer / onSelectionChange — BEFORE the next
+      // edit — so a snapshot never mixes in the next group's first keystroke.
+      if (discrete || breakAfter) this._commit();
+      else this._scheduleIdle();
+    },
+
+    _scheduleIdle() {
+      this._clearIdle();
+      this._idleTimer = setTimeout(() => {
+        if (this._dirty && !this._composing) this._commit();
+      }, this.IDLE_MS);
+    },
+    _clearIdle() { if (this._idleTimer) { clearTimeout(this._idleTimer); this._idleTimer = null; } },
+
+    _commit() {
+      if (!this._dirty) return;
+      this._clearIdle();
+      if (this._idx < this._stack.length - 1) {        // drop redo branch
+        for (let k = this._idx + 1; k < this._stack.length; k++) this._bytes -= this._stack[k].bytes;
+        this._stack.length = this._idx + 1;
+      }
+      const html = this._dehydrate();
+      const entry = { html, anchorBefore: this._groupBefore,
+                      anchorAfter: this._lastPostCaret || this._anchor(), bytes: html.length };
+      this._stack.push(entry);
+      this._bytes += entry.bytes;
+      this._idx = this._stack.length - 1;
+      this._dirty = false; this._groupBefore = null;
+      this._evict();
+      this._pushState();
+    },
+
+    _evict() {
+      while (this._stack.length > this.MAX_STEPS ||
+             (this._bytes > this.MAX_BYTES && this._stack.length > 1)) {
+        this._bytes -= this._stack.shift().bytes;
+        this._idx--;
+      }
+      if (this._idx < 0) this._idx = 0;
+    },
+
+    canUndo() { return this._dirty || this._idx > 0; },
+    canRedo() { return !this._dirty && this._idx < this._stack.length - 1; },
+
+    undo() {
+      this._clearIdle();
+      if (this._dirty) this._commit();     // close open group so it stays redoable
+      if (this._idx <= 0) return;
+      const caret = this._stack[this._idx].anchorBefore;
+      this._idx--;
+      this._apply(this._stack[this._idx].html, caret);
+    },
+    redo() {
+      this._clearIdle();
+      if (this._dirty || this._idx >= this._stack.length - 1) return;
+      const target = this._stack[this._idx + 1];
+      this._idx++;
+      this._apply(target.html, target.anchorAfter);
+    },
+
+    _apply(html, anchor) {
+      this._restoring = true;
+      try { this.editor.restoreDehydrated(html); this._restoreAnchor(anchor); }
+      finally { this._restoring = false; }
+      this._lastPostCaret = anchor; this._dirty = false; this._groupBefore = null;
+      this._pushState();
+    },
+
+    _pushState() {
+      this.editor.postMessage('undoState', { canUndo: this.canUndo(), canRedo: this.canRedo() });
+    },
+
+    // ---- Dehydrated DOM snapshot (§11 revision) ----
+
+    _dehydrate() {
+      const clone = this.editor.element.cloneNode(true);
+      clone.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+      clone.querySelectorAll('.inkwell-block-renderer').forEach(root => {
+        const ph = this._rootToPlaceholder(root);
+        if (ph) root.parentNode.replaceChild(ph, root);
+      });
+      return clone.innerHTML;
+    },
+
+    // Rendered block → parser-style placeholder (isomorphic to appendix C.2
+    // output), so restore reuses _resolvePendingRenderers with no new render
+    // logic. fenced-code roots carry the FULL fence in data-source-b64 but the
+    // placeholder wants inner content + language; display-math / image-group
+    // store the full source already.
+    _rootToPlaceholder(root) {
+      if (typeof ExtensionRegistry === 'undefined') return null;
+      const name = root.getAttribute('data-renderer') || '';
+      const spec = ExtensionRegistry._findRendererByName(name);
+      const blockType = spec ? spec.type : 'fenced-code';
+      let source = '';
+      try { source = decodeURIComponent(escape(atob(root.getAttribute('data-source-b64') || ''))); } catch (e) {}
+      let lang = root.getAttribute('data-language') || '', pending = source;
+      if (blockType === 'fenced-code') {
+        const m = source.match(/^```([^\n]*)\n([\s\S]*?)\n?```$/);
+        if (m) { lang = m[1].trim(); pending = m[2]; }
+      }
+      const ph = document.createElement('div');
+      ph.className = 'inkwell-pending-renderer';
+      ph.setAttribute('data-pending-block-type', blockType);
+      ph.setAttribute('data-pending-renderer', name);
+      ph.setAttribute('data-pending-language', lang);
+      ph.setAttribute('data-pending-source-b64', btoa(unescape(encodeURIComponent(pending))));
+      return ph;
+    },
+
+    // ---- Logical anchor { blockIndex, charOffset } (§11.6) ----
+    // No inEditingFence field: editing fences survive in the dehydrated
+    // snapshot as real <pre> nodes, so the caret locates inside them naturally.
+
+    _anchor() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const range = sel.getRangeAt(0);
+      const el = this.editor.element;
+      if (!el.contains(range.startContainer)) return null;
+      let block = range.startContainer;
+      if (block === el) {
+        block = el.children[Math.min(range.startOffset, el.children.length - 1)] || null;
+      } else {
+        while (block && block.parentNode !== el) block = block.parentNode;
+      }
+      if (!block) return null;
+      return {
+        blockIndex: Array.prototype.indexOf.call(el.children, block),
+        charOffset: this._charOffset(block, range.startContainer, range.startOffset)
+      };
+    },
+
+    // Characters before (container, offset) within block, EXCLUDING attached-UI
+    // subtrees (drag handle etc.) so it matches _locateChar's walk exactly.
+    _charOffset(block, container, offset) {
+      const range = document.createRange();
+      try { range.setStart(block, 0); range.setEnd(container, offset); } catch (e) { return 0; }
+      const frag = range.cloneContents();
+      frag.querySelectorAll('[data-inkwell-ui]').forEach(el => el.remove());
+      return frag.textContent.length;
+    },
+
+    _restoreAnchor(anchor) {
+      if (!anchor) return;
+      const el = this.editor.element;
+      const block = el.children[anchor.blockIndex] || el.lastElementChild;
+      if (!block) return;
+      const pos = this._locateChar(block, anchor.charOffset);
+      try {
+        const range = document.createRange();
+        if (pos) range.setStart(pos.node, pos.offset);
+        else range.selectNodeContents(block);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (e) { /* degrade silently (§11.6) */ }
+    },
+
+    _locateChar(block, target) {
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement && n.parentElement.closest('[data-inkwell-ui]'))
+          ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+      });
+      let seen = 0, node, last = null;
+      while ((node = walker.nextNode())) {
+        const len = node.textContent.length;
+        if (seen + len >= target) return { node, offset: Math.max(0, target - seen) };
+        seen += len; last = node;
+      }
+      return last ? { node: last, offset: last.textContent.length } : null;
+    },
+
+    _contiguous(a, b) {
+      return !!a && !!b && a.blockIndex === b.blockIndex && Math.abs(a.charOffset - b.charOffset) <= 1;
+    },
+
+    // Cursor-jump break (§11.3): a non-contiguous caret move closes the group
+    // NOW (at the pre-jump DOM state), so the next edit opens a fresh group.
+    // Jumps are rare (clicks / cross-line arrows), so committing here is cheap.
+    onSelectionChange() {
+      if (this._restoring || this._composing || !this._dirty) return;
+      const cur = this._anchor();
+      if (cur && this._lastPostCaret && !this._contiguous(this._lastPostCaret, cur)) {
+        this._commit();
+      }
+    }
+  };
+
+  window.UndoStack = UndoStack;
+
+  // ----------------------------------------------------------
   // Editor Core
   // ----------------------------------------------------------
   const Editor = {
@@ -5461,6 +5992,12 @@
 
       // Initialize live converter
       LiveConverter.init(this);
+
+      // Initialize block deletion (shared by table + carousel block menus)
+      BlockDeletion.init(this);
+
+      // Initialize the self-built undo/redo stack (§11)
+      UndoStack.init(this);
 
       // Initialize table manager
       TableManager.init(this);
@@ -5745,13 +6282,45 @@
         }
       });
 
-      document.addEventListener('selectionchange', () => this.updateSelectionState());
+      document.addEventListener('selectionchange', () => {
+        this.updateSelectionState();
+        UndoStack.onSelectionChange();   // cursor-jump break detection (§11.3)
+      });
 
       // Snapshot the caret when this resident editor loses webView-level focus
       // (e.g. switching to another tab). At blur time WebKit still exposes the
       // last in-editor selection, so this captures the pre-blur position for
       // restoreSelection() to reinstate on reactivation.
       this.element.addEventListener('blur', () => this.snapshotSelection());
+
+      // Clipboard (§3.4): strip attached-UI ([data-inkwell-ui]) from the
+      // copied/cut content so button / loading / error / handle text never
+      // leaks into the clipboard (esp. text/plain). Only intervene when the
+      // selection actually contains such an element — otherwise native
+      // copy/cut is left completely untouched (zero behavior change for
+      // ordinary selections). Uses the same stripUIElements as the serializer.
+      const stripClipboard = (e, isCut) => {
+        if (!e.clipboardData) return;
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+        const frag = sel.getRangeAt(0).cloneContents();
+        if (!frag.querySelector('[data-inkwell-ui]')) return;   // fast path: nothing to strip
+        stripUIElements(frag);
+        const holder = document.createElement('div');
+        holder.appendChild(frag);
+        e.clipboardData.setData('text/plain', holder.textContent);
+        e.clipboardData.setData('text/html', holder.innerHTML);
+        e.preventDefault();
+        if (isCut) {
+          // Route the deletion through the existing delete guards (which run on
+          // beforeinput / keydown) rather than a raw range delete, so a partial
+          // cut into a protected block (<pre> / renderer div) stays guarded.
+          document.execCommand('delete');
+          this.onContentChange();
+        }
+      };
+      this.element.addEventListener('copy', (e) => stripClipboard(e, false));
+      this.element.addEventListener('cut',  (e) => stripClipboard(e, true));
 
       this.setupKeyboardShortcuts();
 
@@ -5764,6 +6333,10 @@
       // Ensure empty editor (new document, no loadMarkdown call) is usable
       this.ensureEdgeGaps();
       DragSort.refresh();
+
+      // Seed the undo stack with the initial (possibly empty) document, so a
+      // new note that never gets loadMarkdown still has a base state (§11.4).
+      UndoStack.reset();
 
       this.postMessage('editorReady', {});
     },
@@ -5822,24 +6395,51 @@
     },
 
     loadMarkdown(markdown) {
+      this._loadInto(markdown);
+      // A freshly loaded document is a fresh undo history (§11.4).
+      UndoStack.reset();
+    },
+
+    // Restore a DEHYDRATED DOM snapshot WITHOUT touching undo history (§11).
+    // Used by UndoStack.undo/redo. The snapshot already holds parser-style
+    // placeholders + real structure (empty paragraphs, editing fences), so we
+    // set innerHTML directly and rehydrate — no markdown re-parse (which would
+    // normalise empty paragraphs away). Caller wraps this in _restoring.
+    restoreDehydrated(html) {
+      this.element.innerHTML = html;
+      this._hydrateDOM();
+      // Re-link EditMode to a restored editing fence (preserved as a real
+      // <pre> in the snapshot); at most one is expected.
+      const fenceCode = this.element.querySelector('pre > code.inkwell-live-fence');
+      EditMode._editingFence = fenceCode ? fenceCode.parentNode : null;
+      // Sync the disk source-of-truth and notify Swift of the restored content.
+      this.lastContent = this.getMarkdown();
+      this.postMessage('contentChange', { content: this.lastContent });
+    },
+
+    _loadInto(markdown) {
       this.lastContent = markdown;
       this.element.innerHTML = MarkdownParser.parse(markdown);
+      this._hydrateDOM();
+    },
+
+    // Shared post-innerHTML setup for both the parser path (_loadInto) and the
+    // dehydrated-snapshot restore path (restoreDehydrated).
+    _hydrateDOM() {
       this.element.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         cb.addEventListener('change', () => this.onContentChange());
       });
-      // Phase 3 PR 2: 把 parser 输出的占位符替换为真正的 BlockRenderer 产物
+      // Phase 3 PR 2: 把占位符替换为真正的 BlockRenderer 产物
       this._resolvePendingRenderers();
+      // §11.13: no system text processing in code / math / inline-code (after
+      // resolve so renderer-fallback <pre>s are covered too). Prose untouched.
+      this.element.querySelectorAll('pre, code').forEach(disableTextProcessing);
       this.ensureEdgeGaps();
       this.highlightCodeBlocks();
-      // Set up table resize handles
       this.element.querySelectorAll('table').forEach(t => TableManager.setupResizeHandles(t));
-      // Initialize carousels
       CarouselManager.initAll(this.element);
-      // Set up foldable heading toggles
       FoldableHeadings.refresh();
-      // Set up drag handles
       DragSort.refresh();
-      // Initial word count
       WordCount.update();
     },
 
@@ -6062,7 +6662,12 @@
         });
         this.element.normalize();
       }
-      return MarkdownSerializer.serialize(this.element);
+      // Strip attached-UI subtrees ([data-inkwell-ui]) on a CLONE so the live
+      // editor is untouched, then serialize the clean tree. This is a
+      // pre-processing step BEFORE the serializer's source-authority priority
+      // (§7) — it does not change that priority. §3.4 data-inkwell-ui contract.
+      const clean = stripUIElements(this.element.cloneNode(true));
+      return MarkdownSerializer.serialize(clean);
     },
 
     applyTheme(css) {
@@ -6083,7 +6688,13 @@
         const key = e.key.toLowerCase();
         let handled = true;
 
-        if      (key === 'b' && !e.shiftKey) this.execFormat('bold');
+        // Undo/redo: self-built source-snapshot stack (§11). Intercept so the
+        // native contentEditable stack never runs (D1 retired). Swift also
+        // routes the Edit menu here — the native undoManager must never fire.
+        if      (key === 'z' && !e.shiftKey) UndoStack.undo();
+        else if (key === 'z' && e.shiftKey)  UndoStack.redo();
+        else if (key === 'y' && !e.shiftKey) UndoStack.redo();
+        else if (key === 'b' && !e.shiftKey) this.execFormat('bold');
         else if (key === 'i' && !e.shiftKey) this.execFormat('italic');
         else if (key === 'k' && !e.shiftKey) this.execFormat('link');
         else if (key === 'e' && !e.shiftKey) this.execFormat('inlineCode');
@@ -6243,9 +6854,11 @@
         if (selectedText.length > 0) {
           const code = document.createElement('code');
           try { range.surroundContents(code); } catch(e) {}
+          disableTextProcessing(code);   // \u00A711.13: inline code span
         } else {
           const code = document.createElement('code');
           code.textContent = '\u200B';
+          disableTextProcessing(code);   // \u00A711.13: inline code span
           range.insertNode(code);
           const r = document.createRange(); r.selectNodeContents(code); r.collapse(false); sel.removeAllRanges(); sel.addRange(r);
         }
@@ -6266,6 +6879,7 @@
       const code = document.createElement('code');
       code.textContent = block ? block.textContent || '\n' : '\n';
       pre.appendChild(code);
+      disableTextProcessing(pre);   // §11.13
       if (block && block !== this.element) block.parentNode.replaceChild(pre, block);
       else this.element.appendChild(pre);
       const range = document.createRange(); range.selectNodeContents(code); range.collapse(false);
@@ -6489,6 +7103,12 @@
   window.InkwellEditor = {
     loadMarkdown: (md) => Editor.loadMarkdown(md),
     getMarkdown: () => Editor.getMarkdown(),
+    // Undo/redo bridge (§11.8): the Swift Edit menu calls these into the
+    // self-built stack. Never route to webView.undoManager.
+    undo: () => UndoStack.undo(),
+    redo: () => UndoStack.redo(),
+    canUndo: () => UndoStack.canUndo(),
+    canRedo: () => UndoStack.canRedo(),
     applyTheme: (css) => Editor.applyTheme(css),
     execFormat: (cmd, param) => Editor.execFormat(cmd, param),
     focus: () => {

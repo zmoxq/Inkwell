@@ -208,6 +208,11 @@ struct ThemeCard: View {
 struct GeneralSettingsView: View {
     @AppStorage("editorFontSize") private var fontSize: Double = 17
     @AppStorage("editorLineHeight") private var lineHeight: Double = 1.75
+    // NOT wired to any timer yet. Disk writes currently happen on Cmd+S, tab
+    // close/rename, and lifecycle flushes (scenePhase / app quit / tab switch).
+    // These two prefs — and any values already stored under these keys — are
+    // retained for a future timed-autosave implementation; their Settings UI
+    // (Toggle + interval Slider) is hidden until that lands.
     @AppStorage("autoSave") private var autoSave: Bool = true
     @AppStorage("autoSaveInterval") private var autoSaveInterval: Double = 5
     
@@ -238,27 +243,16 @@ struct GeneralSettingsView: View {
                         .frame(width: 40)
                 }
             }
-            
-            Section("Auto Save") {
-                Toggle("Enable auto-save", isOn: $autoSave)
-                
-                if autoSave {
-                    HStack {
-                        Text("Save every")
-                        Spacer()
-                        Slider(value: $autoSaveInterval, in: 1...30, step: 1) {
-                            Text("Interval")
-                        }
-                        .frame(width: 150)
-                        Text("\(Int(autoSaveInterval))s")
-                            .monospacedDigit()
-                            .frame(width: 40)
-                    }
-                }
-            }
         }
         .padding()
     }
+}
+
+// MARK: - Undo/Redo command routing (§11.8)
+
+extension Notification.Name {
+    static let inkwellUndo = Notification.Name("inkwellUndo")
+    static let inkwellRedo = Notification.Name("inkwellRedo")
 }
 
 // MARK: - macOS Menu Commands
@@ -282,7 +276,7 @@ struct InkwellCommands: Commands {
                 panel.canChooseFiles = false
                 panel.begin { response in
                     if response == .OK, let url = panel.url {
-                        appState.workingDirectory = url
+                        appState.openLibrary(pickedURL: url)
                     }
                 }
             }
@@ -300,6 +294,24 @@ struct InkwellCommands: Commands {
             .keyboardShortcut("o", modifiers: .command)
         }
         
+        // §11.8: replace the default Undo/Redo so the WKWebView's native
+        // undoManager is never invoked (dual-stack is the worst failure mode).
+        // These route into the JS self-built stack via NotificationCenter →
+        // ContentView → the active editor coordinator.
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                NotificationCenter.default.post(name: .inkwellUndo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(!appState.canUndo)
+
+            Button("Redo") {
+                NotificationCenter.default.post(name: .inkwellRedo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(!appState.canRedo)
+        }
+
         CommandGroup(replacing: .saveItem) {
             Button("Save") {
                 appState.saveCurrentDocument()
